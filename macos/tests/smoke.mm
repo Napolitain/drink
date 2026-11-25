@@ -4,6 +4,7 @@
 #import "BreakWindows.h"
 #import "DrinkApp.h"
 #import "Microphone.h"
+#import "development/Session.h"
 
 @interface DrinkApp (TestClock)
 - (uint64_t)clockMilliseconds;
@@ -163,6 +164,8 @@ static void after(NSTimeInterval seconds, dispatch_block_t block) {
 
 int main() {
     @autoreleasepool {
+        if (!BeginDevelopmentSession())
+            return 1;
         NSApplication *app = NSApplication.sharedApplication;
         [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
         __attribute__((objc_precise_lifetime)) SmokeApp *delegate =

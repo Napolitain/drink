@@ -7,7 +7,8 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/assets" "$tmp/new"
 app="$tmp/Drink.app"
 exe="$app/Contents/MacOS/Drink"
-/usr/bin/ditto target/Drink.app "$app"
+/usr/bin/ditto "${1:-target/Drink.app}" "$app"
+/usr/bin/plutil -replace CFBundleIdentifier -string io.github.napolitain.drink "$app/Contents/Info.plist"
 /usr/bin/ssh-keygen -q -t ed25519 -N '' -f "$tmp/key"
 printf 'drink %s\n' "$(cat "$tmp/key.pub")" > "$app/Contents/Resources/release-signers"
 stamp() {

@@ -8,12 +8,13 @@ Drink runs on macOS 14.2 or newer. Download the universal `Drink-macOS.zip` from
 
 Release builds check at launch and daily. The current source downloads public release assets over HTTPS using the curl supplied with macOS. The first release, `v2026.11.25`, was built while the repository was private and uses a signed-in GitHub CLI for its own update checks. Drink checks the archive's Ed25519 signature before extraction, checks the bundle identity, version and macOS code signature, and exchanges the bundles atomically. The new version launches after the next completed break. **Restart to Finish Update** applies it sooner. If a check fails, the menu offers a retry.
 
-For a development build, use Apple Command Line Tools and Rust installed through rustup. Development builds check for releases when you select **Check for Updates…**. Earlier prototypes need a one-time install of an updater-enabled build.
+To switch to a development build, run the following command from the checkout with Apple Command Line Tools and Rust installed:
 
 ```sh
-macos/build
-open target/Drink.app
+macos/build --dev
 ```
+
+**Drink Dev** uses its own preferences and has no release updates. On launch, it temporarily quits a running release. Choose **Quit Drink Dev** to reopen that same release in the background. You can also switch back by opening the installed Drink app. The release starts a fresh 30-minute interval. If it was already closed, it stays closed. The interactive smoke test uses the same handoff. Only one development or smoke session runs at a time. To build without switching, run `macos/build`; opening `target/Drink Dev.app` later performs the handoff.
 
 Click the water drop in the menu bar for **Take break now**, **Pause for 1 hour**, **Resume** or **Quit Drink**. Take break now respects protected activities. Hold Escape for two seconds to end a visible break early. To launch at login, copy the bundle to Applications and add Drink under System Settings → General → Login Items.
 

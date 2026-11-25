@@ -49,10 +49,11 @@ static BOOL isGame(NSRunningApplication *app) {
 
     _item = [NSStatusBar.systemStatusBar
         statusItemWithLength:NSSquareStatusItemLength];
+    NSString *name = NSBundle.mainBundle.infoDictionary[@"CFBundleName"];
     _item.button.image = [NSImage imageWithSystemSymbolName:@"drop"
-                                   accessibilityDescription:@"Drink"];
-    _item.button.toolTip = @"Drink";
-    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Drink"];
+                                   accessibilityDescription:name];
+    _item.button.toolTip = name;
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:name];
     menu.delegate = self;
     menu.autoenablesItems = NO;
     _status = [menu addItemWithTitle:@"" action:nil keyEquivalent:@""];
@@ -74,7 +75,7 @@ static BOOL isGame(NSRunningApplication *app) {
     if ([NSBundle.mainBundle.bundleIdentifier
             isEqualToString:@"io.github.napolitain.drink"])
         _updater = [[ReleaseUpdater alloc] initWithMenu:menu];
-    [menu addItemWithTitle:@"Quit Drink"
+    [menu addItemWithTitle:[@"Quit " stringByAppendingString:name]
                     action:@selector(terminate:)
              keyEquivalent:@"q"]
         .target = NSApp;

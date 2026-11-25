@@ -45,4 +45,4 @@ jobs:
             - if: runner.os == 'macOS'
               run: |
                   macos/build
-                  macos/tests/release-update
+                  macos/tests/release-update "target/Drink Dev.app"
