@@ -5,6 +5,11 @@ Keep these instructions aligned with the README, hooks, build configuration and 
 
 ## Working Policy
 
+For Drink, fetch from `origin` before starting work and incorporate upstream
+changes while preserving local edits. Push each verified, signed commit to the
+branch it tracks on `Napolitain/drink`. Confirm the remote branch tip matches
+the local commit before reporting the work synced.
+
 Read `README.md`, the relevant source, build configuration, hooks and CI before
 editing. Inspect the branch and worktree; preserve unrelated user changes and
 keep the work focused on the requested outcome. Finish implementation,
