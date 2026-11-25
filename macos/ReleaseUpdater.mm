@@ -113,11 +113,10 @@ UpdateResult InstallLatestRelease(NSURL *bundle) {
             self->_item.title = @"Update Unavailable · Retry";
             break;
         }
-        self->_item.toolTip =
-            result == UpdateResult::Failed
-                ? @"Check GitHub CLI sign-in, repository access and write "
-                  @"access to the app’s folder."
-                : nil;
+        self->_item.toolTip = result == UpdateResult::Failed
+                                  ? @"Check your connection to GitHub and "
+                                    @"write access to the app’s folder."
+                                  : nil;
       });
     });
 }

@@ -6,7 +6,7 @@ Drink is a water-break reminder. The first working adapter is a native macOS men
 
 Drink runs on macOS 14.2 or newer. Download the universal `Drink-macOS.zip` from the [latest GitHub release](https://github.com/Napolitain/drink/releases/latest), unzip it, and move Drink.app to a writable Applications folder such as `~/Applications`. The release supports Apple Silicon and Intel. It is ad-hoc code signed and has no Apple notarization ticket.
 
-Release builds check at launch and daily. Install the GitHub CLI and run `gh auth login` with an account that can read this private repository. Drink uses that login through `gh`. It checks the archive's Ed25519 signature before extraction, checks the bundle identity, version and macOS code signature, and exchanges the bundles atomically. The new version launches after the next completed break. **Restart to Finish Update** applies it sooner. If a check fails, the menu offers a retry.
+Release builds check at launch and daily. The current source downloads public release assets over HTTPS using the curl supplied with macOS. The first release, `v2026.11.25`, was built while the repository was private and uses a signed-in GitHub CLI for its own update checks. Drink checks the archive's Ed25519 signature before extraction, checks the bundle identity, version and macOS code signature, and exchanges the bundles atomically. The new version launches after the next completed break. **Restart to Finish Update** applies it sooner. If a check fails, the menu offers a retry.
 
 For a development build, use Apple Command Line Tools and Rust installed through rustup. Development builds check for releases when you select **Check for Updates…**. Earlier prototypes need a one-time install of an updater-enabled build.
 

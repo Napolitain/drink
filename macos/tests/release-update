@@ -20,16 +20,19 @@ stamp "$app" 2025.01.01
 /usr/bin/ditto "$app" "$tmp/new/Drink.app"
 stamp "$tmp/new/Drink.app" 2025.01.08
 export DRINK_TEST_ASSETS="$tmp/assets" DRINK_TEST_TAG=v2025.01.08
-cat > "$tmp/bin/gh" <<'GH'
+cat > "$tmp/bin/curl" <<'CURL'
 #!/bin/bash
 set -eu
-case "$2" in
-    view) echo "$DRINK_TEST_TAG";;
-    download) cp "$DRINK_TEST_ASSETS"/Drink-macOS.zip* .;;
+url="${!#}"
+case "$url" in
+    https://github.com/Napolitain/drink/releases/latest)
+        printf 'https://github.com/Napolitain/drink/releases/tag/%s' "$DRINK_TEST_TAG";;
+    "https://github.com/Napolitain/drink/releases/download/$DRINK_TEST_TAG/"*)
+        cp "$DRINK_TEST_ASSETS/${url##*/}" .;;
     *) exit 1;;
 esac
-GH
-chmod +x "$tmp/bin/gh"
+CURL
+chmod +x "$tmp/bin/curl"
 export PATH="$tmp/bin:$PATH"
 asset="$tmp/assets/Drink-macOS.zip"
 /usr/bin/ditto -c -k --keepParent "$tmp/new/Drink.app" "$asset"

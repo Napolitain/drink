@@ -3,17 +3,22 @@
 set -euo pipefail
 bundle=$1
 stage=$2
-export PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin:/usr/local/bin:/run/current-system/sw/bin:$HOME/.nix-profile/bin"
-export LC_ALL=C GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_HOST=github.com
-repo=github.com/Napolitain/drink
+export LC_ALL=C
+releases=https://github.com/Napolitain/drink/releases
+# Use public release URLs, without credentials or the GitHub API rate limit.
+http=(-q --fail --silent --show-error --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 --retry 2)
 version_key=CFBundleShortVersionString
 current=$(/usr/bin/plutil -extract "$version_key" raw "$bundle/Contents/Info.plist")
-tag=$(gh release view --repo "$repo" --json tagName --jq .tagName)
+location=$(curl "${http[@]}" --head --output /dev/null --write-out '%{redirect_url}' "$releases/latest")
+[[ "$location" == "$releases/tag/"* ]] || { echo "Unexpected latest-release location" >&2; exit 1; }
+tag=${location#"$releases/tag/"}
 [[ $tag =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] || { echo "Invalid release tag" >&2; exit 1; }
 version=${tag#v}
 [[ "$version" > "$current" ]] || exit 0
 cd "$stage"
-gh release download "$tag" --repo "$repo" --pattern Drink-macOS.zip --pattern Drink-macOS.zip.sig
+for file in Drink-macOS.zip Drink-macOS.zip.sig; do
+    curl "${http[@]}" --location --output "$file" "$releases/download/$tag/$file"
+done
 /usr/bin/ssh-keygen -Y verify -f "$bundle/Contents/Resources/release-signers" \
     -I drink -n drink-macos -s Drink-macOS.zip.sig < Drink-macOS.zip
 /usr/bin/ditto -x -k Drink-macOS.zip .
