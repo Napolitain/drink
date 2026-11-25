@@ -1,12 +1,29 @@
 # Drink
 
-Drink is a planned desktop reminder for macOS, Windows and Linux. Every 30 minutes it covers the displays for 30 seconds so you can get water, blink and look away. When a reminder falls during a call or game, it waits for a suitable moment. KDE Plasma is the first Linux target.
+Drink is a water-break reminder. The first working adapter is a native macOS menu-bar app. Windows and Linux adapters are planned. Every 30 minutes it covers the displays for 30 seconds so you can get water, blink and look away. When a reminder falls during a call or game, it waits for a suitable moment. KDE Plasma is the first Linux target.
+
+## Run on macOS
+
+Build on macOS 14.2 or newer with Apple Command Line Tools and Rust installed through rustup. This produces an ad-hoc signed app for the Mac that built it.
+
+```sh
+macos/build
+open target/Drink.app
+```
+
+Click the water drop in the menu bar for **Take break now**, **Pause for 1 hour**, **Resume** or **Quit Drink**. Take break now respects protected activities. Hold Escape for two seconds to end a visible break early. To launch at login, copy the bundle to Applications and add Drink under System Settings → General → Login Items.
+
+The app observes Core Audio input activity, including virtual inputs, without recording audio. It recognizes foreground apps with a macOS game category. To protect an uncategorized game, append its bundle identifier and relaunch Drink:
+
+```sh
+defaults write io.github.napolitain.drink ProtectedGameBundleIDs -array-add com.example.game
+```
 
 ## What a break feels like
 
 One quiet, opaque, borderless window per display shows “Get some water. Look away and blink.” The windows close automatically, even if you walk away. The app runs in the user’s desktop session and needs no main window. A small status menu shows the next break or the reason it is waiting, with actions to take a break now, pause for an hour, resume or quit.
 
-Proposed defaults for the proof of concept (PoC):
+The proof of concept (PoC) uses the following defaults.
 
 - Use a monotonic deadline. Keep at most one break pending. Start the next interval when the displayed break ends.
 - If a protected activity is already under way when the break comes due, wait until all known blockers have cleared for 10 continuous seconds. If another blocker starts during those seconds, start the grace period again when it ends.
@@ -19,7 +36,7 @@ For example, a break due at 10:30 during a call that ends at 10:47 appears at 10
 
 Use one Rust scheduling core. It consumes clock, session, and activity events and decides when to show or close the overlay. The desktop adapter owns the windows, menu and activity observations. Each detector reports active, clear or unavailable, plus a reason the menu can display. An unavailable detector leaves the timer usable. A manual pause covers cases such as listening to a meeting with the microphone disconnected.
 
-Start with an event loop that sleeps until a deadline or an OS event. A native window library such as winit can wait on either. Choose the renderer after testing whether a static message can be drawn and focused reliably on all displays. Measure idle CPU, wakeups, resident memory and installed size before adding a larger toolkit. [winit event loop](https://docs.rs/winit/latest/winit/event_loop/enum.ControlFlow.html)
+The Mac adapter uses the AppKit run loop, one-shot timers and native display, session, foreground-app and Core Audio notifications. A failed audio subscription is retried. Objective-C++ calls the shared Rust scheduler through a small CXX bridge. The rendered message uses AppKit text controls. The core has zero runtime crate dependencies.
 
 | Target | PoC integration to validate |
 | --- | --- |
@@ -48,8 +65,20 @@ Use a fake clock for the shared scheduler and property-test overlapping inhibito
 - Start Steam alone, then try an actual game in fullscreen and borderless modes. Check that a brief Alt-Tab does not trigger a pending break and that returning to work does.
 - Lock or suspend across a deadline. Confirm waking starts a fresh interval. Measure idle behavior with the overlay hidden.
 
+### First macOS run
+
+On an Apple Silicon Mac running macOS 27.2.1, the release app launched in the menu-bar session. The native smoke test verified a display-sized opaque window offscreen, a short Escape tap, a two-second Escape hold, an idle Core Audio reading and suppression of a due or manual break while locked. In the unlocked session, the accelerated timer covered the connected display, acquired keyboard focus, dismissed the overlay automatically and restored the previous foreground app. Take break now, Pause and Resume passed in the same session. A real call or headset change, a game, multiple monitors and fullscreen Spaces still need interactive verification.
+
 ## Development baseline
 
-The starting template is [Napolitain/template-rust at f60084d](https://github.com/Napolitain/template-rust/tree/f60084dd74f9c80f6985059ab37a1f7f6a3ad5ad), selected from the local `../templates` checkout. The planning repository adopts its `AGENTS.md`, `.editorconfig` and `prek.toml`. Install hooks with `prek install` and run `prek run --all-files` to check the current files.
+The Rust core follows [template-rust at f60084d](https://github.com/Napolitain/template-rust/tree/f60084dd74f9c80f6985059ab37a1f7f6a3ad5ad), including its toolchain, lint and release profiles, proptest, coverage and mutation testing. The macOS adapter uses the formatting rules from `template-cpp`. CXX generates the bridge in its own crate, keeping native dependencies out of the core. The default Cargo package is the core. CI is configured to test it on Linux, macOS and Windows and build the native app on macOS.
 
-At the first code milestone, bring over the template's Cargo manifest, pinned toolchain, lint and release profiles, property tests, coverage and mutation workflows. Replace the example with scheduler tests. Keep the template's 80% line-coverage gate, and extend build checks to macOS and Windows. Use portable CPU targets for distributable builds. If native integration needs another language, adopt the corresponding template for that component where available. Desktop support requires the interactive checks above in addition to a successful build.
+```sh
+prek install
+cargo test --locked
+prek run --all-files
+prek run --all-files --hook-stage pre-push
+prek run --hook-stage manual cargo-mutants --all-files
+```
+
+Coverage requires cargo-llvm-cov and the pinned llvm-tools component. Mutation testing requires cargo-mutants. The interactive `macos/build --smoke-test` command launches a separate test bundle and briefly takes keyboard focus. It advances the clock to exercise the same timer, menu actions and windows as the real app. A protected session can skip the visual checks (exit 77).

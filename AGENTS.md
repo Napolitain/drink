@@ -1,6 +1,6 @@
-# Rust Template Instructions
+# Drink development instructions
 
-This policy applies to this repository and to projects created from this template.
+This project follows the Rust template for its scheduling core.
 Keep these instructions aligned with the README, hooks, build configuration and CI.
 
 ## Working Policy
@@ -120,13 +120,13 @@ able to understand the task, motivation and implementation from the commit alone
 
 ## Build and Test Commands
 
-Run commands from this repository's root. Use the pinned `rust-toolchain.toml`
-toolchain; `nix develop --command "$SHELL"` supplies an optional environment.
+Run commands from the repository root using the toolchain in `rust-toolchain.toml`.
 
 ```sh
 prek run -a
 prek run -a --hook-stage pre-push
 cargo build --release
+macos/build  # on macOS with Apple Command Line Tools
 ```
 
 Use `cargo test --all-targets --all-features` for focused iteration. Hooks run
@@ -142,8 +142,7 @@ when applicable; inspect survivors rather than relying only on coverage.
 ## Template Performance Guidance
 
 Retain the release profile's fat LTO, single codegen unit, strip and panic settings
-unless a measured requirement justifies changing them. Native CPU tuning is in
-`.cargo/config.toml`; account for deployment hardware when distributing binaries.
-Use `./tools/perf-build baseline` and `./tools/perf-build pgo -- ./train.sh` for
-instrumentation PGO with a representative training driver and the matching rustup
-LLVM tools. AutoFDO and Propeller are not supplied template modes.
+unless a measured requirement justifies changing them. Build for the architecture's
+portable baseline. The shared core forbids unsafe Rust. The separate macOS bridge
+uses CXX to generate the native interface. Build and sign-check the app bundle
+after changing that interface or the Objective-C++ adapter.

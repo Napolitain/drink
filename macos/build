@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+export MACOSX_DEPLOYMENT_TARGET=14.2
+export CXX=/usr/bin/clang++
+# Keep the generated bridge header and library together even with a global Cargo target dir.
+export CARGO_TARGET_DIR="$PWD/target"
+cargo build --locked --release -p drink-macos-bridge
+
+case "${1:-}" in
+    "") bundle="$CARGO_TARGET_DIR/Drink.app"; entry=macos/main.mm ;;
+    --smoke-test) bundle="$CARGO_TARGET_DIR/DrinkSmoke.app"; entry=macos/tests/smoke.mm ;;
+    *) echo "Usage: macos/build [--smoke-test]" >&2; exit 2 ;;
+esac
+mkdir -p "$bundle/Contents/MacOS"
+cp macos/Info.plist "$bundle/Contents/"
+if [[ "$entry" != macos/main.mm ]]; then
+    /usr/bin/plutil -replace CFBundleIdentifier -string io.github.napolitain.drink.smoke "$bundle/Contents/Info.plist"
+fi
+"$CXX" -std=c++17 -fobjc-arc -Os -Wall -Wextra -Werror -Wl,-dead_strip -Wl,-x \
+    -I "$CARGO_TARGET_DIR/cxxbridge" -I macos macos/{BreakWindows,DrinkApp,Microphone}.mm "$entry" \
+    "$CARGO_TARGET_DIR/release/libdrink_macos_bridge.a" \
+    -framework AppKit -framework CoreAudio -framework CoreGraphics \
+    -o "$bundle/Contents/MacOS/Drink"
+/usr/bin/strip -x "$bundle/Contents/MacOS/Drink"
+/usr/bin/codesign --force --sign - "$bundle"
+printf '%s\n' "$bundle"
+if [[ "$entry" != macos/main.mm ]]; then
+    exec "$bundle/Contents/MacOS/Drink"
+fi
