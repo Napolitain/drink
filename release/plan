@@ -1,0 +1,21 @@
+#!/bin/bash
+# Print the tag to publish, or nothing if this run has no release to make.
+set -euo pipefail
+head=$1
+latest=$2
+tag="v$(date -u +%Y.%m.%d)"
+if [[ -n "$latest" ]]; then
+    prior=$(git rev-parse --verify "refs/tags/$latest^{commit}")
+    if [[ "$prior" == "$head" || "$latest" == "$tag" ]]; then exit 0; fi
+    git merge-base --is-ancestor "$prior" "$head" || {
+        echo "Current main does not descend from the prior release." >&2
+        exit 1
+    }
+fi
+if git show-ref --verify --quiet "refs/tags/$tag"; then
+    [[ "$(git rev-parse "refs/tags/$tag^{commit}")" == "$head" ]] || {
+        echo "Existing tag $tag points at a different commit." >&2
+        exit 1
+    }
+fi
+printf '%s\n' "$tag"

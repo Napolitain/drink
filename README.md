@@ -23,6 +23,17 @@ The app observes Core Audio input activity, including virtual inputs, without re
 defaults write io.github.napolitain.drink ProtectedGameBundleIDs -array-add com.example.game
 ```
 
+## Weekly releases
+
+GitHub Actions checks `main` every Monday at 08:17 UTC. If the commit differs from the last published release and descends from it, CI tests the core and updater, builds the universal Mac app, signs the ZIP and publishes both assets together. The UTC release date supplies the tag, for example `v2026.11.25`. An unchanged week produces no release. A manual dispatch follows the same rules, including at most one release per UTC date. [Weekly release workflow](https://github.com/Napolitain/drink/actions/workflows/release.yml)
+
+The release signing key is stored in the repository Actions secret `DRINK_RELEASE_SIGNING_KEY`. The matching public key is in `macos/release-signers`. Keep the signer available across releases. To verify a downloaded archive using a trusted checkout:
+
+```sh
+ssh-keygen -Y verify -f macos/release-signers -I drink -n drink-macos \
+    -s Drink-macOS.zip.sig < Drink-macOS.zip
+```
+
 ## What a break feels like
 
 One quiet, opaque, borderless window per display shows “Get some water. Look away and blink.” The windows close automatically, even if you walk away. The app runs in the user’s desktop session and needs no main window. A small status menu shows the next break or the reason it is waiting, with actions to take a break now, pause for an hour, resume or quit.

@@ -1,0 +1,78 @@
+name: Weekly release
+on:
+    schedule:
+        - cron: "17 8 * * 1"
+    workflow_dispatch:
+
+concurrency:
+    group: weekly-release
+    cancel-in-progress: false
+
+permissions:
+    contents: read
+
+jobs:
+    plan:
+        if: github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        outputs:
+            tag: ${{ steps.plan.outputs.tag }}
+        steps:
+            - uses: actions/checkout@v7.0.1
+              with:
+                  fetch-depth: 0
+            - id: plan
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  latest=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName // ""')
+                  tag=$(release/plan "$GITHUB_SHA" "$latest")
+                  echo "tag=$tag" >> "$GITHUB_OUTPUT"
+                  echo "Release: ${tag:-skip (no new commit or already released today)}" >> "$GITHUB_STEP_SUMMARY"
+
+    publish:
+        needs: plan
+        if: needs.plan.outputs.tag != ''
+        runs-on: macos-latest
+        permissions:
+            contents: write
+        env:
+            TAG: ${{ needs.plan.outputs.tag }}
+        steps:
+            - uses: actions/checkout@v7.0.1
+              with:
+                  persist-credentials: false
+            - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+            - run: cargo test --locked -p drink-core
+            - name: Build universal app and archive
+              run: |
+                  DRINK_RELEASE_VERSION="${TAG#v}" macos/build
+                  macos/tests/release-update
+                  codesign --verify --strict target/Drink.app
+                  archs=$(lipo -archs target/Drink.app/Contents/MacOS/Drink)
+                  for arch in x86_64 arm64; do grep -qw "$arch" <<< "$archs"; done
+                  ditto -c -k --keepParent target/Drink.app Drink-macOS.zip
+            - name: Sign and verify the archive
+              env:
+                  SIGNING_KEY: ${{ secrets.DRINK_RELEASE_SIGNING_KEY }}
+              run: |
+                  umask 077
+                  key=$(mktemp)
+                  trap 'rm -f "$key"' EXIT
+                  printf '%s\n' "$SIGNING_KEY" > "$key"
+                  unset SIGNING_KEY
+                  ssh-keygen -Y sign -f "$key" -n drink-macos Drink-macOS.zip
+                  ssh-keygen -Y verify -f macos/release-signers -I drink -n drink-macos -s Drink-macOS.zip.sig < Drink-macOS.zip
+            - name: Publish both assets together
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  assets=(Drink-macOS.zip Drink-macOS.zip.sig)
+                  if gh release view "$TAG" --json isDraft,targetCommitish --jq '[.isDraft,.targetCommitish] | @tsv' > "$RUNNER_TEMP/existing"; then
+                      read -r draft target < "$RUNNER_TEMP/existing"
+                      [[ "$draft" == true && "$target" == "$GITHUB_SHA" ]] || exit 1
+                      gh release upload "$TAG" "${assets[@]}" --clobber
+                      gh release edit "$TAG" --draft=false --latest
+                  else
+                      gh release create "$TAG" "${assets[@]}" --target "$GITHUB_SHA" --title "Drink ${TAG#v}" --generate-notes --latest
+                  fi
