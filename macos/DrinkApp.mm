@@ -1,6 +1,7 @@
 #import "DrinkApp.h"
 #import "BreakWindows.h"
 #import "Microphone.h"
+#import "ReleaseUpdater.h"
 #include "drink-macos-bridge/src/lib.rs.h"
 #include <optional>
 
@@ -22,6 +23,7 @@ static BOOL isGame(NSRunningApplication *app) {
 @implementation DrinkApp {
     std::optional<rust::Box<drink::Scheduler>> _scheduler;
     NSStatusItem *_item;
+    ReleaseUpdater *_updater;
     NSMenuItem *_status;
     NSMenuItem *_pause;
     NSMenuItem *_micStatus;
@@ -69,6 +71,9 @@ static BOOL isGame(NSRunningApplication *app) {
                       keyEquivalent:@""];
     _pause.target = self;
     [menu addItem:NSMenuItem.separatorItem];
+    if ([NSBundle.mainBundle.bundleIdentifier
+            isEqualToString:@"io.github.napolitain.drink"])
+        _updater = [[ReleaseUpdater alloc] initWithMenu:menu];
     [menu addItemWithTitle:@"Quit Drink"
                     action:@selector(terminate:)
              keyEquivalent:@"q"]
@@ -165,12 +170,16 @@ static BOOL isGame(NSRunningApplication *app) {
     _input = [_mic sample];
     auto &s = **_scheduler;
     uint64_t now = self.clockMilliseconds;
+    BOOL hadOverlay = _overlay.count > 0;
     s.update(now, self.present, self.blocked);
     if (s.visible())
         [_overlay show];
     else
         [_overlay hide];
 
+    if (hadOverlay && !s.visible() && !s.pending() && !s.paused() &&
+        self.present && !self.blocked)
+        [_updater restartIfUpdated];
     [_timer invalidate];
     _timer = nil;
     uint64_t deadline = s.deadline();

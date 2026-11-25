@@ -1,0 +1,50 @@
+#!/bin/bash
+# Exercises the production update entry point with a disposable install and signer.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/bin" "$tmp/assets" "$tmp/new"
+app="$tmp/Drink.app"
+exe="$app/Contents/MacOS/Drink"
+/usr/bin/ditto target/Drink.app "$app"
+/usr/bin/ssh-keygen -q -t ed25519 -N '' -f "$tmp/key"
+printf 'drink %s\n' "$(cat "$tmp/key.pub")" > "$app/Contents/Resources/release-signers"
+stamp() {
+    for key in CFBundleShortVersionString CFBundleVersion; do
+        /usr/bin/plutil -replace "$key" -string "$2" "$1/Contents/Info.plist"
+    done
+    /usr/bin/codesign -f -s - "$1"
+}
+stamp "$app" 2025.01.01
+/usr/bin/ditto "$app" "$tmp/new/Drink.app"
+stamp "$tmp/new/Drink.app" 2025.01.08
+export DRINK_TEST_ASSETS="$tmp/assets" DRINK_TEST_TAG=v2025.01.08
+cat > "$tmp/bin/gh" <<'GH'
+#!/bin/bash
+set -eu
+case "$2" in
+    view) echo "$DRINK_TEST_TAG";;
+    download) cp "$DRINK_TEST_ASSETS"/Drink-macOS.zip* .;;
+    *) exit 1;;
+esac
+GH
+chmod +x "$tmp/bin/gh"
+export PATH="$tmp/bin:$PATH"
+asset="$tmp/assets/Drink-macOS.zip"
+/usr/bin/ditto -c -k --keepParent "$tmp/new/Drink.app" "$asset"
+/usr/bin/ssh-keygen -Y sign -f "$tmp/key" -n drink-macos "$asset"
+cp "$asset" "$tmp/original"
+printf 'tampered' >> "$asset"
+if "$exe" --check-for-updates; then echo "Accepted corrupt archive" >&2; exit 1; fi
+[[ "$(/usr/bin/plutil -extract CFBundleVersion raw "$app/Contents/Info.plist")" == 2025.01.01 ]] || exit 1
+mv "$tmp/original" "$asset"
+# A genuine signature for a different version must still be rejected.
+if DRINK_TEST_TAG=v2025.01.09 "$exe" --check-for-updates; then echo "Accepted mismatched version" >&2; exit 1; fi
+"$exe" --check-for-updates
+[[ "$(/usr/bin/plutil -extract CFBundleVersion raw "$app/Contents/Info.plist")" == 2025.01.08 ]] || exit 1
+/usr/bin/codesign --verify --strict "$app"
+rm "$asset"
+"$exe" --check-for-updates
+DRINK_TEST_TAG=v2025.01.01 "$exe" --check-for-updates
+echo "Update, signature rejection, version mismatch, equal version and downgrade checks passed."
