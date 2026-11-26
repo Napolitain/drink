@@ -13,12 +13,8 @@ jobs:
         runs-on: ubuntu-26.04
         steps:
             - uses: actions/checkout@v7.0.1
-            - name: Build and check the native x86-64 Nix package
-              run: |
-                  sudo apt-get update
-                  sudo apt-get install --no-install-recommends -y nix-bin nix-setup-systemd
-                  sudo systemctl start nix-daemon.socket
-                  nix --extra-experimental-features 'nix-command flakes' flake check --no-update-lock-file --print-build-logs
+            - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+            - run: nix flake check --no-update-lock-file --print-build-logs
 
     ci:
         runs-on: ubuntu-26.04
