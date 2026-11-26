@@ -32,6 +32,15 @@ jobs:
             - name: Hooks (pre-push)
               run: prek run --show-diff-on-failure --all-files --hook-stage pre-push
 
+            - name: Build and exercise the Plasma Wayland adapter
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends qt6-base-dev qt6-wayland \
+                    liblayershellqtinterface-dev libkf6service-dev libkf6statusnotifieritem-dev libpipewire-0.3-dev \
+                    kwin-wayland pipewire-bin libspa-0.2-modules dbus-daemon libgl1-mesa-dri
+                  linux/build
+                  linux/tests/plasma-session
+
     core:
         strategy:
             matrix:

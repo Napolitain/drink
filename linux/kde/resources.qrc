@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/drink">
+        <file>foreground.js</file>
+        <file>drink.svg</file>
+    </qresource>
+</RCC>

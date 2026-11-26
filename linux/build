@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+cmake -S linux -B target/linux -DCMAKE_BUILD_TYPE=Release
+cmake --build target/linux --parallel
+ctest --test-dir target/linux --output-on-failure

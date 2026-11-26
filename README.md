@@ -1,6 +1,26 @@
 # Drink
 
-Drink is a water-break reminder. Native adapters run in the macOS menu bar and the Windows 11 notification area. A Linux adapter is planned. Every 30 minutes it covers the displays for 30 seconds so you can get water, blink and look away. When a reminder falls during a call or game, it waits for a suitable moment. KDE Plasma is the first Linux target.
+Drink is a water-break reminder. Native adapters run in the KDE Plasma system tray on Wayland, the macOS menu bar and the Windows 11 notification area. Every 30 minutes it covers the displays for 30 seconds so you can get water, blink and look away. When a reminder falls during a call or game, it waits for a suitable moment.
+
+## Run on KDE Plasma
+
+Build from the checkout with the pinned Rust toolchain, a C++20 compiler, CMake, pkg-config, Qt 6, LayerShellQt 6.6 or newer, KDE Frameworks 6 KService and KStatusNotifierItem (6.14+), and the PipeWire development files. On Kubuntu 26.04 the development packages include `qt6-base-dev`, `liblayershellqtinterface-dev`, `libkf6service-dev`, `libkf6statusnotifieritem-dev` and `libpipewire-0.3-dev`. Run the executable inside your Plasma Wayland session.
+
+```sh
+linux/build
+target/linux/drink-kde
+```
+
+On NixOS with the repository's Rust toolchain available, build with `nix-shell -p kdePackages.layer-shell-qt kdePackages.kservice kdePackages.kstatusnotifieritem qt6.qtbase pipewire pkg-config cmake --run linux/build`. To install the executable, application launcher and icon under your account, run `cmake --install target/linux --prefix "$HOME/.local"` and make sure `~/.local/bin` is on your desktop session's PATH. To launch at login, add **Drink** in System Settings → Autostart.
+
+Open the water drop in the system tray for **Take break now**, **Pause for 1 hour**, **Resume** or **Quit Drink**. Hold Escape for two seconds to end a break early. Drink observes active PipeWire routes from audio sources, including non-default headsets. Recording a speaker monitor allows breaks. A KWin script observes the foreground app while Drink runs. It recognizes desktop entries in the Game category and Steam game window classes such as `steam_app_1234`. The Steam launcher alone allows breaks.
+
+For a game that Plasma cannot identify, add its desktop ID or window class to `~/.config/Napolitain/Drink.conf` (under `$XDG_CONFIG_HOME` if set) and relaunch Drink.
+
+```ini
+[General]
+ProtectedGames=org.example.Game, another-game.exe
+```
 
 ## Run on macOS
 
@@ -51,7 +71,7 @@ Set-ItemProperty -Path $key -Name ProtectedGameExecutables -Type MultiString -Va
 
 ## Weekly releases
 
-GitHub Actions checks `main` every Monday at 08:17 UTC. If the commit differs from the last published release and descends from it, CI tests the core and both adapters, builds the universal Mac app and the x64 Windows executable, signs each ZIP and publishes all four assets together. The UTC release date supplies the tag, for example `v2026.11.25`. An unchanged week produces no release. A manual dispatch follows the same rules, including at most one release per UTC date. Installed apps accept only `vYYYY.MM.DD` tags, so a second fix on the same day ships under the next date; a suffix such as `v2026.11.26.1` would make every existing install reject the latest release. [Weekly release workflow](https://github.com/Napolitain/drink/actions/workflows/release.yml)
+GitHub Actions checks `main` every Monday at 08:17 UTC. If the commit differs from the last published release and descends from it, the release workflow tests the core and the Mac and Windows adapters, builds the universal Mac app and the x64 Windows executable, signs each ZIP and publishes all four assets together. The UTC release date supplies the tag, for example `v2026.11.25`. An unchanged week produces no release. A manual dispatch follows the same rules, including at most one release per UTC date. Installed apps accept only `vYYYY.MM.DD` tags, so a second fix on the same day ships under the next date; a suffix such as `v2026.11.26.1` would make every existing install reject the latest release. [Weekly release workflow](https://github.com/Napolitain/drink/actions/workflows/release.yml)
 
 The release signing key is stored in the repository Actions secret `DRINK_RELEASE_SIGNING_KEY`. The matching public key is in `macos/release-signers`. Keep the signer available across releases. To verify a downloaded archive using a trusted checkout:
 
@@ -83,17 +103,19 @@ For example, a break due at 10:30 during a call that ends at 10:47 appears at 10
 
 Use one Rust scheduling core. It consumes clock, session, and activity events and decides when to show or close the overlay. The desktop adapter owns the windows, menu and activity observations. Each detector reports active, clear or unavailable, plus a reason the menu can display. An unavailable detector leaves the timer usable. A manual pause covers cases such as listening to a meeting with the microphone disconnected.
 
+The Plasma adapter uses Qt 6 and the same CXX interface as the Mac adapter. LayerShellQt anchors an opaque surface to all four edges of each output and requests keyboard focus. The KWin observer restores the previous window when the last surface closes if the user has stayed on the same app, desktop and activity. Plasma's screen locker and systemd-logind supply lock and sleep events. The reusable PipeWire observer under `linux/` listens for registry and link changes on a pollable file descriptor. It traces active links upstream from recording streams and excludes sink and monitor paths. It retries a lost connection. Qt and KWin integration live under `linux/kde/`. [LayerShellQt](https://invent.kde.org/plasma/layer-shell-qt) · [WirePlumber routing](https://pipewire.pages.freedesktop.org/wireplumber/policies/linking.html) · [KWin scripting API](https://develop.kde.org/docs/plasma/kwin/api/)
+
 The Mac adapter uses the AppKit run loop, one-shot timers and native display, session, foreground-app and Core Audio notifications. A failed audio subscription is retried. Objective-C++ calls the shared Rust scheduler through a small CXX bridge. The rendered message uses AppKit text controls. The core has zero runtime crate dependencies.
 
 The Windows adapter is Rust built on Microsoft's `windows` crate, so it calls the core directly. A hidden window owns a one-shot timer, the notification-area icon, session and display-power notifications, a foreground-change hook and Core Audio callbacks. Callbacks from other threads post messages to that window, so every decision runs on one thread. Portable policy, menu text and icon artwork are tested on every platform. Unsafe code is confined to the Win32 modules, and each block states why it is sound. Windows lets only the process with the latest input take keyboard focus. A timed break therefore sends an empty mouse input, which neither moves nor clicks, before taking focus. If Windows still refuses, nothing is shown and Drink retries. The message uses GDI text scaled for each display's DPI. Games come from your list and from the paths the Xbox Game Bar records under `HKCU\System\GameConfigStore`, matched by full path so that a generic host such as `javaw.exe` only counts in a game's own folder. While a due break waits on a game in front, Drink registers for Raw Input and requests only each event's header, which names the device type; key codes and button data never reach it. It stops listening as soon as the break shows or the game leaves the foreground. If the registration fails, a game in front keeps deferring the break.
 
 | Target | PoC integration to validate |
 | --- | --- |
-| KDE Plasma on Wayland | Put PipeWire microphone detection in the shared Linux adapter. Follow active capture links to microphone sources, including headsets. Exclude speaker-monitor streams. Request a fullscreen surface on each output. Keep Plasma-specific placement or foreground-game detection in `linux/kde`. A small KWin script is an option if the compositor needs to supply focused-window information. [WirePlumber routing](https://pipewire.pages.freedesktop.org/wireplumber/policies/linking.html) · [Wayland fullscreen requests](https://wayland.app/protocols/xdg-shell#xdg_toplevel:request:set_fullscreen) · [KWin scripting API](https://develop.kde.org/docs/plasma/kwin/api/) |
+| KDE Plasma on Wayland | Check a real call on a non-default headset, switching inputs, a game in fullscreen and borderless modes, and typing into an editor as a break starts. Check a physical monitor hotplug and suspend/resume on the target hardware. |
 | Windows | Inspect audio sessions on active capture endpoints, including non-default devices. Use the shell's fullscreen Direct3D and presentation signals to defer. Match the foreground executable against configured games for borderless or windowed titles. Opening Steam alone should allow breaks. Test typing into an editor as a break appears, headset changes and per-monitor DPI on multiple displays. [Audio session states](https://learn.microsoft.com/en-us/windows/win32/api/audiosessiontypes/ne-audiosessiontypes-audiosessionstate) · [Shell notification states](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-query_user_notification_state) |
 | macOS | Check Core Audio input activity and associated devices. Use borderless windows in the current Space, including when another app is fullscreen. Test headset changes and multiple displays with separate Spaces. Allow configured foreground game apps to defer. [Core Audio input activity](https://developer.apple.com/documentation/coreaudio/kaudioprocesspropertyisrunninginput) · [AppKit window behaviors](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct) |
 
-GNOME and Hyprland can reuse the Linux audio and scheduling work. Add `linux/gnome` or `linux/hyprland` only when there is desktop-specific behavior to implement and a session to test it on. Start on Plasma Wayland. Verify X11 separately before claiming it works. Across all platforms, read activity metadata without opening the microphone. Mic activity can persist while a conferencing app is muted, or disappear while the user is still in the meeting.
+GNOME and Hyprland can reuse the Linux audio and scheduling work. Add `linux/gnome` or `linux/hyprland` only when there is desktop-specific behavior to implement and a session to test it on. The current Linux build targets Plasma Wayland. X11 requires separate integration and verification. Across all platforms, read activity metadata without opening the microphone. Mic activity can persist while a conferencing app is muted, or disappear while the user is still in the meeting.
 
 ## Second pass — screen recording and sharing
 
@@ -114,6 +136,10 @@ Use a fake clock for the shared scheduler and property-test overlapping inhibito
 - Start Steam alone, then try an actual game in fullscreen and borderless modes. Check that a brief Alt-Tab does not trigger a pending break and that returning to work does.
 - Lock or suspend across a deadline. Confirm waking starts a fresh interval. Measure idle behavior with the overlay hidden.
 
+### First KDE Plasma run
+
+On x86-64 NixOS with KWin 6.7.5 and Qt 6.11.2, the app registered with the Plasma tray, reported both activity detectors available, handled Pause and Resume through the tray menu and exited through Quit. A second launch exited cleanly. With the overlay hidden, a ten-second sample of the installed process added zero CPU ticks at 100 Hz and ended at 63,600 KiB RSS. In an isolated KWin Wayland session with two virtual outputs, the smoke test advanced the interval, checked both output sizes and keyboard focus, let the full 30-second break expire, and observed the previous client regain focus. It also exercised Escape tap and hold, a client with a Steam game ID, a live PipeWire route from a synthetic source, recovery after restarting PipeWire, and lock and wake signals from test services. Physical headsets, games, display hotplug and system suspend still need hardware verification.
+
 ### First macOS run
 
 On an Apple Silicon Mac running macOS 27.2.1, the release app launched in the menu-bar session. The native smoke test verified a display-sized opaque window offscreen, a short Escape tap, a two-second Escape hold, an idle Core Audio reading and suppression of a due or manual break while locked. In the unlocked session, the accelerated timer covered the connected display, acquired keyboard focus, dismissed the overlay automatically and restored the previous foreground app. Take break now, Pause and Resume passed in the same session. A real call or headset change, a game, multiple monitors and fullscreen Spaces still need interactive verification.
@@ -124,7 +150,7 @@ On an x64 PC with one display running Windows 11 Pro 10.0.26300, the native smok
 
 ## Development baseline
 
-The Rust core follows [template-rust at f60084d](https://github.com/Napolitain/template-rust/tree/f60084dd74f9c80f6985059ab37a1f7f6a3ad5ad), including its toolchain, lint and release profiles, proptest, coverage and mutation testing. The macOS adapter uses the formatting rules from `template-cpp`. CXX generates the bridge in its own crate, keeping native dependencies out of the core. The default Cargo packages are the core and the Windows adapter, whose Win32 modules compile only on Windows. CI is configured to test the core on Linux, macOS and Windows, lint and test the Windows adapter on Windows, and build the native apps on macOS and Windows. Windows builds link the C runtime statically, so `Drink.exe` needs no Visual C++ Redistributable.
+The Rust core follows [template-rust at f60084d](https://github.com/Napolitain/template-rust/tree/f60084dd74f9c80f6985059ab37a1f7f6a3ad5ad), including its toolchain, lint and release profiles, proptest, coverage and mutation testing. The native C++ adapters use the formatting rules from `template-cpp`. CXX generates the bridge in its own crate, keeping native dependencies out of the core. The default Cargo packages are the core and the Windows adapter, whose Win32 modules compile only on Windows. CI is configured to test the core on Linux, macOS and Windows, lint and test the Windows adapter on Windows, and build all three native apps. Linux CI runs `linux/tests/plasma-session` against private KWin, D-Bus and PipeWire instances with two virtual outputs. Windows builds link the C runtime statically, so `Drink.exe` needs no Visual C++ Redistributable.
 
 ```sh
 prek install

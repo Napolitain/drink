@@ -126,6 +126,8 @@ Run commands from the repository root using the toolchain in `rust-toolchain.tom
 prek run -a
 prek run -a --hook-stage pre-push
 cargo build --release
+linux/build  # on Linux with the Plasma Wayland development dependencies in README.md
+linux/tests/plasma-session  # isolated two-output KWin and PipeWire smoke test
 macos/build  # on macOS with Apple Command Line Tools
 windows/build.ps1  # on Windows with the Visual Studio C++ build tools and PowerShell 7.3+
 ```
@@ -146,9 +148,10 @@ when applicable; inspect survivors rather than relying only on coverage.
 
 Retain the release profile's fat LTO, single codegen unit, strip and panic settings
 unless a measured requirement justifies changing them. Build for the architecture's
-portable baseline. The shared core forbids unsafe Rust. The separate macOS bridge
-uses CXX to generate the native interface. Build and sign-check the app bundle
-after changing that interface or the Objective-C++ adapter. The Windows adapter
+portable baseline. The shared core forbids unsafe Rust. The macOS and Plasma
+adapters use the same CXX bridge. Keep shared Linux audio observation independent
+of the desktop toolkit and Plasma integration in `linux/kde/`. Build and sign-check
+the Mac app bundle after changing that interface or the Objective-C++ adapter. The Windows adapter
 denies unsafe code except in its Win32 modules, where every block carries a
 `SAFETY` comment, and links the C runtime statically. Run
 `windows/build.ps1 -SmokeTest` after changing its windows, focus or timer
