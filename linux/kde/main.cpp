@@ -1,8 +1,30 @@
 #include "Drink.h"
+#include "Instance.h"
 #include <QApplication>
-#include <QDBusConnectionInterface>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+
+namespace {
+#ifdef DRINK_RELEASE_VERSION
+constexpr bool development = false;
+constexpr auto version = DRINK_RELEASE_VERSION;
+#else
+constexpr bool development = true;
+constexpr auto version = "development";
+#endif
+constexpr auto name = development ? "Drink Dev" : "Drink";
+} // namespace
 
 int main(int argc, char **argv) {
+    QCoreApplication::setApplicationName(name);
+    QCoreApplication::setApplicationVersion(version);
+    QCoreApplication::setOrganizationName("Napolitain");
+    if (argc == 2 && (std::strcmp(argv[1], "--version") == 0 ||
+                      std::strcmp(argv[1], "-v") == 0)) {
+        std::printf("%s %s\n", name, version);
+        return 0;
+    }
     QApplication app(argc, argv);
     const auto desktops = qEnvironmentVariable("XDG_CURRENT_DESKTOP")
                               .split(':', Qt::SkipEmptyParts);
@@ -12,18 +34,23 @@ int main(int argc, char **argv) {
         qCritical("Drink for Plasma requires a KDE Wayland session.");
         return 1;
     }
-    app.setApplicationName("Drink");
-    app.setOrganizationName("Napolitain");
-    app.setDesktopFileName("io.github.napolitain.Drink");
+    app.setDesktopFileName(development ? "io.github.napolitain.Drink.Dev"
+                                       : "io.github.napolitain.Drink");
     app.setQuitOnLastWindowClosed(false);
-    auto bus = QDBusConnection::sessionBus();
-    if (!bus.isConnected()) {
-        qCritical("Drink requires the Plasma session bus.");
+    app.setQuitLockEnabled(false);
+    std::unique_ptr<kde::Drink> reminder;
+    kde::Instance instance(development);
+    QObject::connect(&instance, &kde::Instance::activate,
+                     [&] { reminder = std::make_unique<kde::Drink>(); });
+    QObject::connect(&instance, &kde::Instance::deactivate,
+                     [&] { reminder.reset(); });
+    switch (instance.start()) {
+    case kde::Instance::Start::Duplicate:
+        return 0;
+    case kde::Instance::Start::Failed:
         return 1;
+    case kde::Instance::Start::Active:
+        return app.exec();
     }
-    if (!bus.registerService(kde::busName))
-        return bus.interface()->isServiceRegistered(kde::busName).value() ? 0
-                                                                          : 1;
-    kde::Drink drink;
-    return app.exec();
+    return 1;
 }

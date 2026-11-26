@@ -127,7 +127,7 @@ prek run -a
 prek run -a --hook-stage pre-push
 cargo build --release
 linux/build  # on Linux with the Plasma Wayland development dependencies in README.md
-linux/tests/plasma-session  # isolated two-output KWin and PipeWire smoke test
+linux/tests/plasma-session  # isolated KWin, PipeWire and release/Dev handoff tests
 macos/build  # on macOS with Apple Command Line Tools
 windows/build.ps1  # on Windows with the Visual Studio C++ build tools and PowerShell 7.3+
 ```

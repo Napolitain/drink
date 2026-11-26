@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ${DRINK_TEST_SESSION:-} != 1 || -z ${DBUS_SESSION_BUS_ADDRESS:-} ||
+    ${DBUS_SYSTEM_BUS_ADDRESS:-} != "$DBUS_SESSION_BUS_ADDRESS" ]]; then
+    echo 'Run this test through linux/tests/plasma-session.' >&2
+    exit 1
+fi
+dev=$1
+release=$2
+common=io.github.napolitain.Drink
+dev_role=$common.Development
+release_role=$common.Release
+instance=$common.Instance
+fail() { echo "handoff: $*" >&2; exit 1; }
+
+cleanup() {
+    local pid
+    for pid in $(jobs -pr); do
+        kill "$pid" 2>/dev/null || :
+    done
+    wait || :
+}
+trap cleanup EXIT
+
+owner_pid() {
+    local answer
+    if answer=$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
+        org.freedesktop.DBus GetConnectionUnixProcessID s "$1" 2>/dev/null); then
+        echo "${answer#u }"
+    else
+        echo 0
+    fi
+}
+
+expect_owner() {
+    local current i
+    for ((i = 0; i < 100; i++)); do
+        current=$(owner_pid "$1")
+        [[ $current == "$2" ]] && return
+        sleep 0.05
+    done
+    fail "$1 has PID $current, expected $2"
+}
+
+has_foreground() {
+    busctl --user --list tree "$1" | grep -Fxq /Foreground
+}
+
+quit_role() {
+    busctl --user call "$1" /Instance "$instance" quit
+}
+
+[[ $(env -u DISPLAY -u WAYLAND_DISPLAY "$dev" --version) == 'Drink Dev development' ]] ||
+    fail 'headless Dev version'
+release_version=$(env -u DISPLAY -u WAYLAND_DISPLAY "$release" -v)
+[[ $release_version =~ ^Drink\ [0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] ||
+    fail 'headless release version'
+
+# Without a displaced release there is nothing to restore on Dev exit.
+"$dev" &
+dev_pid=$!
+expect_owner "$common" "$dev_pid"
+timeout 8s "$dev"
+expect_owner "$dev_role" "$dev_pid"
+quit_role "$dev_role"
+wait "$dev_pid"
+expect_owner "$common" 0
+expect_owner "$release_role" 0
+
+"$release" &
+release_pid=$!
+expect_owner "$common" "$release_pid"
+timeout 8s "$release"
+expect_owner "$release_role" "$release_pid"
+[[ $(busctl --user call "$release_role" /Instance "$instance" park) == 'b false' ]] ||
+    fail 'a caller without the Dev role could park the release'
+expect_owner "$common" "$release_pid"
+
+take_over_with_dev() {
+    "$dev" &
+    dev_pid=$!
+    expect_owner "$common" "$dev_pid"
+    expect_owner "$dev_role" "$dev_pid"
+    expect_owner "$release_role" "$release_pid"
+    has_foreground "$dev_role" || fail 'active Dev has no foreground observer'
+    if has_foreground "$release_role"; then
+        fail 'parked release still exports its foreground observer'
+    fi
+}
+
+expect_restored_release() {
+    expect_owner "$common" "$release_pid"
+    expect_owner "$dev_role" 0
+    has_foreground "$release_role" || fail 'restored release has no foreground observer'
+}
+
+# Normal Dev quit, process death, and explicitly reopening the installed app.
+take_over_with_dev
+timeout 8s "$dev"
+quit_role "$dev_role"
+wait "$dev_pid"
+expect_restored_release
+
+take_over_with_dev
+kill -KILL "$dev_pid"
+wait "$dev_pid" 2>/dev/null || :
+expect_restored_release
+
+take_over_with_dev
+timeout 8s "$release"
+wait "$dev_pid"
+expect_restored_release
+quit_role "$release_role"
+wait "$release_pid"
+expect_owner "$common" 0
+
+# An installed release can also take the desktop from a standalone Dev.
+"$dev" &
+dev_pid=$!
+expect_owner "$common" "$dev_pid"
+"$release" &
+release_pid=$!
+expect_restored_release
+wait "$dev_pid"
+quit_role "$release_role"
+wait "$release_pid"
+expect_owner "$common" 0
+expect_owner "$release_role" 0
+
+# Two development processes racing for an empty desktop leave one reminder.
+"$dev" &
+first=$!
+"$dev" &
+second=$!
+for ((i = 0; i < 100; i++)); do
+    winner=$(owner_pid "$common")
+    [[ $winner != 0 ]] && break
+    sleep 0.05
+done
+case "$winner" in
+    "$first") other=$second ;;
+    "$second") other=$first ;;
+    *) fail "neither simultaneous launch owns the reminder" ;;
+esac
+expect_owner "$dev_role" "$winner"
+wait "$other"
+quit_role "$dev_role"
+wait "$winner"
+expect_owner "$common" 0

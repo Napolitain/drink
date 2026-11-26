@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Drink
+Name=@drink_name@
 Comment=Water-break reminder
-Exec=drink-kde
-Icon=io.github.napolitain.Drink
+Exec=@drink_program@
+Icon=@drink_id@
 Categories=Utility;
 OnlyShowIn=KDE;
 Terminal=false

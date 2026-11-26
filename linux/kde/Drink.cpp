@@ -40,7 +40,7 @@ void Drink::finishBreak() {
 void Drink::setupMenu() {
     tray.setStandardActionsEnabled(false);
     tray.setIsMenu(true);
-    tray.setTitle("Drink");
+    tray.setTitle(qApp->applicationName());
     tray.setIconByPixmap(QIcon(":/drink/drink.svg"));
     tray.setStatus(KStatusNotifierItem::Active);
     auto &menu = *tray.contextMenu();
@@ -62,7 +62,8 @@ void Drink::setupMenu() {
         update();
     });
     menu.addSeparator();
-    menu.addAction("Quit Drink", qApp, &QCoreApplication::quit);
+    menu.addAction("Quit " + qApp->applicationName(), qApp,
+                   &QCoreApplication::quit);
     connect(&menu, &QMenu::aboutToShow, this, &Drink::refreshMenu);
 }
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+export DRINK_TEST_BUILD_DIR
+DRINK_TEST_BUILD_DIR=$(realpath "${1:-target/linux}")
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/config" XDG_DATA_HOME="$tmp/data"
@@ -49,5 +51,6 @@ for _ in {1..100}; do
     [[ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]] && break
     sleep 0.1
 done
-DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" timeout 90 target/linux/plasma-test || { cat "$XDG_RUNTIME_DIR/"*.log >&2; exit 1; }
+DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" ctest --test-dir "$DRINK_TEST_BUILD_DIR" \
+    --output-on-failure -L plasma || { cat "$XDG_RUNTIME_DIR/"*.log >&2; exit 1; }
 SESSION

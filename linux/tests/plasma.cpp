@@ -122,7 +122,7 @@ static int exercise(QApplication &app) {
     std::uint64_t offset = 0;
     kde::Drink drink([&] { return elapsed.elapsed() + offset; });
     QProcess second;
-    second.start(app.applicationDirPath() + "/drink-kde", {});
+    second.start(DRINK_TEST_PROGRAM, {});
     require(second.waitForFinished(3000) &&
                 second.exitStatus() == QProcess::NormalExit &&
                 second.exitCode() == 0,

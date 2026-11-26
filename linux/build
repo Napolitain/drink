@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-cmake -S linux -B target/linux -DCMAKE_BUILD_TYPE=Release
-cmake --build target/linux --parallel
-ctest --test-dir target/linux --output-on-failure
+if [[ $# -gt 1 || ( $# == 1 && $1 != --dev ) ]]; then
+    echo "Usage: linux/build [--dev]" >&2
+    exit 2
+fi
+build_dir=target/linux
+if [[ -n ${DRINK_RELEASE_VERSION:-} ]]; then
+    if [[ $# != 0 ]]; then
+        echo "Release builds take no launch options" >&2
+        exit 2
+    fi
+    build_dir=target/linux-release
+fi
+cmake -S linux -B "$build_dir" -DCMAKE_BUILD_TYPE=Release \
+    -DDRINK_RELEASE_VERSION="${DRINK_RELEASE_VERSION:-}"
+cmake --build "$build_dir" --parallel
+ctest --test-dir "$build_dir" --output-on-failure -LE plasma
+if [[ ${1:-} == --dev ]]; then
+    exec "$build_dir/drink-kde-dev"
+fi
