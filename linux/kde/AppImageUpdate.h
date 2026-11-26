@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QTimer>
+#include <cstdint>
 
 namespace kde {
 class AppImageUpdate : public QObject {
@@ -10,24 +11,30 @@ class AppImageUpdate : public QObject {
 public:
     explicit AppImageUpdate(QObject *parent = nullptr);
     ~AppImageUpdate() override;
-    bool enabled() const { return !image.isEmpty(); }
-    bool checking() const { return state == State::Checking; }
-    bool ready() const { return state == State::Installed; }
-    QString menuText() const;
+    [[nodiscard]] bool enabled() const { return !image.isEmpty(); }
+    [[nodiscard]] bool checking() const { return state == State::Checking; }
+    [[nodiscard]] bool ready() const { return state == State::Installed; }
+    [[nodiscard]] QString menuText() const;
 
     // Subprocesses outside the mounted image need the host Qt environment.
     static QProcessEnvironment hostEnvironment();
 
-public slots:
-    void check();
-    void restartIfReady();
+    Q_SLOT void check();
+    Q_SLOT void restartIfReady();
 
 signals:
     void changed();
     void restartRequested(const QString &outerPath);
 
 private:
-    enum class State { Idle, Checking, Current, Failed, Installed };
+    Q_DISABLE_COPY_MOVE(AppImageUpdate)
+    enum class State : std::uint8_t {
+        Idle,
+        Checking,
+        Current,
+        Failed,
+        Installed
+    };
     void setState(State value);
     QString image, initialIdentity;
     State state = State::Idle;

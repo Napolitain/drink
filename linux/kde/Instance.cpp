@@ -33,11 +33,13 @@ void request(const QDBusConnection &bus, const QString &peer,
 
 bool quitDevelopment(const QDBusConnection &bus) {
     const auto peer = owner(bus, devRole);
-    if (peer.isEmpty())
+    if (peer.isEmpty()) {
         return true;
+    }
     request(bus, peer, "quit");
-    if (owner(bus, devRole) != peer)
+    if (owner(bus, devRole) != peer) {
         return true;
+    }
     qCritical("Drink Dev did not release the desktop session.");
     return false;
 }
@@ -52,8 +54,9 @@ Instance::Instance(bool development)
 
 Instance::~Instance() {
     releaseReminder();
-    if (ownsRole)
+    if (ownsRole) {
         bus.unregisterService(dev ? devRole : releaseRole);
+    }
 }
 
 Instance::Start Instance::start() {
@@ -74,13 +77,15 @@ Instance::Start Instance::start() {
 }
 
 Instance::Start Instance::startLocked() {
-    const auto role = dev ? devRole : releaseRole;
+    const auto *const role = dev ? devRole : releaseRole;
     ownsRole = bus.registerService(role);
     // Opening any release ends Dev. A parked release then resumes itself.
-    if (!dev && !quitDevelopment(bus))
+    if (!dev && !quitDevelopment(bus)) {
         return Start::Failed;
-    if (!ownsRole)
+    }
+    if (!ownsRole) {
         return owner(bus, role).isEmpty() ? Start::Failed : Start::Duplicate;
+    }
 
     const auto previous = owner(bus, busName);
     if (!previous.isEmpty()) {
@@ -100,8 +105,9 @@ Instance::Start Instance::startLocked() {
 }
 
 bool Instance::claimReminder() {
-    if (!bus.registerService(busName))
+    if (!bus.registerService(busName)) {
         return false;
+    }
     active = true;
     parked = false;
     emit activate();
@@ -117,8 +123,10 @@ void Instance::releaseReminder() {
 }
 
 bool Instance::park() {
-    if (dev || !calledFromDBus() || message().service() != owner(bus, devRole))
+    if (dev || !calledFromDBus() ||
+        message().service() != owner(bus, devRole)) {
         return false;
+    }
     parked = true;
     releaseReminder();
     return true;
@@ -135,15 +143,17 @@ void Instance::quit() {
 }
 
 void Instance::resume() {
-    if (!parked || !ownsRole)
+    if (!parked || !ownsRole) {
         return;
+    }
     QLockFile lock(lockPath());
     if (!lock.tryLock()) {
         QTimer::singleShot(100, this, &Instance::resume);
         return;
     }
-    if (!owner(bus, devRole).isEmpty())
+    if (!owner(bus, devRole).isEmpty()) {
         return;
+    }
     if (!claimReminder()) {
         qWarning("Could not restore Drink after the development session.");
         QCoreApplication::quit();

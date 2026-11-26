@@ -15,7 +15,7 @@ public:
     void port(Id id, bool monitor);
     void link(Id id, Id source, Id outputPort, Id destination, bool active);
     void remove(Id id);
-    bool capturing() const;
+    [[nodiscard]] bool capturing() const;
 
 private:
     struct Link {

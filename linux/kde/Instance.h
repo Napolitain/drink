@@ -4,6 +4,7 @@
 #include <QDBusContext>
 #include <QDBusServiceWatcher>
 #include <QObject>
+#include <cstdint>
 
 namespace kde {
 // One role name per flavor, and one shared name for the active reminder.
@@ -13,20 +14,19 @@ class Instance : public QObject, protected QDBusContext {
     Q_CLASSINFO("D-Bus Interface", "io.github.napolitain.Drink.Instance")
 
 public:
-    enum class Start { Active, Duplicate, Failed };
+    enum class Start : std::uint8_t { Active, Duplicate, Failed };
     explicit Instance(bool development);
     ~Instance() override;
     Start start();
+    Q_SCRIPTABLE Q_SLOT bool park();
+    Q_SCRIPTABLE Q_SLOT void quit();
 
 signals:
     void activate();
     void deactivate();
 
-public slots:
-    Q_SCRIPTABLE bool park();
-    Q_SCRIPTABLE void quit();
-
 private:
+    Q_DISABLE_COPY_MOVE(Instance)
     Start startLocked();
     bool claimReminder();
     void releaseReminder();

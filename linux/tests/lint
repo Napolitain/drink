@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -P "$(dirname "$0")/../.."
+checks=()
+if [[ ${1:-} == --complexity-only ]]; then
+    checks+=(--checks='-*,readability-function-cognitive-complexity')
+    shift
+fi
+if (( $# > 1 )); then
+    echo 'Usage: linux/tests/lint [--complexity-only] [build-directory]' >&2
+    exit 2
+fi
+build=$(realpath "${1:-target/linux-coverage}")
+database=$build/compile_commands.json
+if [[ ! -s $database ]]; then
+    echo 'Run linux/tests/coverage first to generate the Clang compilation database and headers.' >&2
+    exit 1
+fi
+
+# ClangTool processes every compile command for each selected source, including
+# the Dev and AppImage variants of main.cpp. Skip generated Qt and CXX code.
+sources=$(jq -r --arg source "$PWD/linux/" --arg build "$build/" '
+    [.[].file | select(startswith($source) and test("\\.(cc|cpp|cxx)$") and (startswith($build) | not))]
+    | unique[]' "$database")
+if [[ -z $sources ]]; then
+    echo 'The compilation database has no Drink Linux sources.' >&2
+    exit 1
+fi
+mapfile -t files <<<"$sources"
+path_regex() { realpath "$1" | sed 's/[][(){}.^$?+*\\|]/\\&/g'; }
+tidy=$(command -v clang-tidy-21 || command -v clang-tidy)
+"$tidy" -p "$build" --quiet --config-file="$PWD/linux/.clang-tidy" "${checks[@]}" \
+    --header-filter="^$(path_regex linux)/" --exclude-header-filter="^$(path_regex "$build")/" \
+    "${files[@]}"
+
+if (( ${#checks[@]} )); then exit 0; fi
+
+# These findings originate inside the Cargo-generated rust::Box and layout
+# helpers. Keep them in the report while enforcing all checks on Drink code.
+bridge="$build/cargo/cxxbridge/drink-macos-bridge/src/lib.rs.h"
+cppcheck --project="$database" --file-filter="$PWD/linux/*" -i"$build" --library=qt \
+    --enable=warning,style,performance,portability --error-exitcode=1 --quiet \
+    --exitcode-suppressions=<(printf '%s\n' "noExplicitConstructor:$bridge" \
+        "uninitMemberVarPrivate:$bridge" "unusedPrivateFunction:$bridge")

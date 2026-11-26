@@ -28,8 +28,8 @@ private:
     void finishBreak();
     void connectAudio();
     void refreshMenu();
-    bool present() const;
-    bool blocked() const;
+    [[nodiscard]] bool present() const;
+    [[nodiscard]] bool blocked() const;
     std::function<std::uint64_t()> now;
     rust::Box<drink::Scheduler> scheduler;
     Session session;
@@ -40,6 +40,9 @@ private:
     drink::Activity audio = drink::Activity::Unavailable;
     QTimer timer;
     KStatusNotifierItem tray;
-    QAction *status, *micStatus, *gameStatus, *pause;
+    QAction *status = nullptr;
+    QAction *micStatus = nullptr;
+    QAction *gameStatus = nullptr;
+    QAction *pause = nullptr;
 };
 } // namespace kde

@@ -8,8 +8,8 @@ namespace kde {
 class BreakWindows : public QObject {
     Q_OBJECT
 public:
-    void sync(bool visible);
-    bool visible() const { return !windows.empty(); }
+    void sync(bool shouldShow);
+    [[nodiscard]] bool visible() const { return !windows.empty(); }
 
 signals:
     void dismissed();

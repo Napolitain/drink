@@ -5,13 +5,13 @@
 
 namespace kde {
 static const QString saver = QStringLiteral("org.freedesktop.ScreenSaver");
-Session::Session() {
+Session::Session()
+    : watch(saver, QDBusConnection::sessionBus(),
+            QDBusServiceWatcher::WatchForOwnerChange) {
     auto bus = QDBusConnection::sessionBus();
     bus.connect(saver, "/ScreenSaver", saver, "ActiveChanged", this,
                 SLOT(locked(bool)));
-    auto *watch = new QDBusServiceWatcher(
-        saver, bus, QDBusServiceWatcher::WatchForOwnerChange, this);
-    connect(watch, &QDBusServiceWatcher::serviceOwnerChanged, this,
+    connect(&watch, &QDBusServiceWatcher::serviceOwnerChanged, this,
             &Session::readLock);
     QDBusConnection::systemBus().connect(
         "org.freedesktop.login1", "/org/freedesktop/login1",
@@ -29,8 +29,9 @@ void Session::readLock() {
     QDBusReply<bool> active =
         QDBusConnection::sessionBus().call(call, QDBus::Block, 1500);
     locked(!active.isValid() || active.value());
-    if (!active.isValid())
+    if (!active.isValid()) {
         retry.start();
+    }
 }
 
 void Session::locked(bool active) {
@@ -41,9 +42,10 @@ void Session::locked(bool active) {
 
 void Session::sleep(bool active) {
     sleeping = active;
-    if (!active)
+    if (!active) {
         readLock();
-    else
+    } else {
         emit changed();
+    }
 }
 } // namespace kde

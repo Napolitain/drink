@@ -12,19 +12,23 @@
 #include <QTest>
 #include <QWidget>
 #include <algorithm>
+#include <iostream>
 #include <stdexcept>
 
 static void require(bool okay, const char *reason) {
-    if (!okay)
+    if (!okay) {
         throw std::runtime_error(reason);
+    }
 }
 
-static QAction *action(QString text) {
-    for (auto *widget : qApp->topLevelWidgets()) {
+static QAction *action(const QString &text) {
+    for (auto *widget : QApplication::topLevelWidgets()) {
         if (auto *menu = qobject_cast<QMenu *>(widget)) {
-            for (auto *item : menu->actions())
-                if (item->text().startsWith(text))
+            for (auto *item : menu->actions()) {
+                if (item->text().startsWith(text)) {
                     return item;
+                }
+            }
         }
     }
     return nullptr;
@@ -32,9 +36,11 @@ static QAction *action(QString text) {
 
 static QList<QWindow *> overlays() {
     QList<QWindow *> result;
-    for (auto *window : qApp->topLevelWindows())
-        if (window->title() == "Drink" && window->isExposed())
+    for (auto *window : QGuiApplication::topLevelWindows()) {
+        if (window->title() == "Drink" && window->isExposed()) {
             result.append(window);
+        }
+    }
     return result;
 }
 
@@ -43,31 +49,31 @@ static void until(auto predicate, const char *reason) {
 }
 
 static void startClient(QProcess &client, const QString &id) {
-    client.start(qApp->applicationFilePath(), {"--client", id});
+    client.start(QCoreApplication::applicationFilePath(), {"--client", id});
     require(client.waitForStarted(), "start Wayland client");
     until([&] { return client.canReadLine(); }, "client got keyboard focus");
     require(client.readLine().trimmed() == "focused",
             "unexpected client focus state");
 }
 
-static int runClient(QApplication &app, const QString &desktopId) {
-    app.setDesktopFileName(desktopId);
+static int runClient(const QApplication &app, const QString &desktopId) {
+    QGuiApplication::setDesktopFileName(desktopId);
     QWidget window;
     QObject::connect(&app, &QGuiApplication::focusWindowChanged,
-                     [](QWindow *focused) {
-                         if (focused) {
-                             puts("focused");
-                             fflush(stdout);
+                     [](const QWindow *focused) {
+                         if (focused != nullptr) {
+                             std::cout << "focused\n" << std::flush;
                          }
                      });
     window.show();
-    return app.exec();
+    return QApplication::exec();
 }
 
-static int exercise(QApplication &app) {
+static int exercise() {
     require(qEnvironmentVariableIsSet("DRINK_TEST_SESSION"),
             "start with tests/plasma-session");
-    require(app.platformName() == "wayland" && app.screens().size() == 2,
+    require(QGuiApplication::platformName() == "wayland" &&
+                QGuiApplication::screens().size() == 2,
             "two virtual Wayland outputs");
     QProcess audioServer;
     auto startAudio = [&] {
@@ -98,14 +104,24 @@ static int exercise(QApplication &app) {
                                QDBusConnection::ExportAllSlots |
                                    QDBusConnection::ExportAllSignals),
             "lock service");
-    app.setApplicationName("Drink");
-    app.setOrganizationName("Napolitain");
+    QCoreApplication::setApplicationName("Drink");
+    QCoreApplication::setOrganizationName("Napolitain");
     QElapsedTimer elapsed;
     elapsed.start();
     std::uint64_t offset = 0;
     kde::Drink drink(nullptr, [&] {
         return static_cast<std::uint64_t>(elapsed.elapsed()) + offset;
     });
+    const auto *original = bus.objectRegisteredAt("/Foreground");
+    require(original != nullptr, "foreground observer registered");
+    {
+        const kde::Foreground duplicate;
+        require(!duplicate.isAvailable(),
+                "second foreground observer could not register");
+    }
+    require(
+        bus.objectRegisteredAt("/Foreground") == original,
+        "destroying the duplicate preserved the active foreground observer");
     int finished = 0;
     QObject::connect(&drink, &kde::Drink::breakFinished, [&] { ++finished; });
     QProcess second;
@@ -124,10 +140,10 @@ static int exercise(QApplication &app) {
     offset += 1800000;
     drink.update();
     take->trigger();
-    require(action("Waiting for your return") && overlays().isEmpty(),
+    require(action("Waiting for your return") != nullptr &&
+                overlays().isEmpty(),
             "lock suppressed timed and manual breaks");
-    saver.locked = false;
-    emit saver.ActiveChanged(false);
+    saver.unlock();
     until([] { return action("Next break in 30 min"); }, "unlock starts fresh");
 
     // Steam the launcher should allow an ordinary timed break.
@@ -138,10 +154,10 @@ static int exercise(QApplication &app) {
     until(
         [] {
             return overlays().size() == 2 &&
-                   overlays().contains(qApp->focusWindow());
+                   overlays().contains(QGuiApplication::focusWindow());
         },
         "timed overlay covered two outputs with focus");
-    for (auto *screen : qApp->screens()) {
+    for (auto *screen : QGuiApplication::screens()) {
         const auto visible = overlays();
         require(std::ranges::any_of(visible,
                                     [screen](QWindow *window) {
@@ -160,16 +176,12 @@ static int exercise(QApplication &app) {
           "previous window regained focus");
     require(finished == 1, "timed break can finish a staged update");
     take->trigger();
-    until(
-        [] {
-            return overlays().contains(qApp->focusWindow()) &&
-                   qApp->focusWindow();
-        },
-        "manual break");
-    QTest::keyClick(qApp->focusWindow(), Qt::Key_Escape);
+    until([] { return overlays().contains(QGuiApplication::focusWindow()); },
+          "manual break");
+    QTest::keyClick(QGuiApplication::focusWindow(), Qt::Key_Escape);
     QTest::qWait(2100);
     require(overlays().size() == 2, "short Escape tap kept the break");
-    QTest::keyPress(qApp->focusWindow(), Qt::Key_Escape);
+    QTest::keyPress(QGuiApplication::focusWindow(), Qt::Key_Escape);
     QTest::qWait(1200);
     require(overlays().size() == 2, "a partial Escape hold kept the break");
     until([] { return overlays().isEmpty(); },
@@ -179,10 +191,12 @@ static int exercise(QApplication &app) {
     take->trigger();
     auto *pause = action("Pause for 1 hour");
     pause->trigger();
-    require(action("Paused") && action("Resume"), "pause suppresses the break");
+    require(action("Paused") != nullptr && action("Resume") != nullptr,
+            "pause suppresses the break");
     require(finished == 2, "pausing a break leaves a staged update waiting");
     pause->trigger();
-    require(action("Next break in 30 min"), "resume starts a fresh interval");
+    require(action("Next break in 30 min") != nullptr,
+            "resume starts a fresh interval");
     QProcess game;
     startClient(game, "steam_app_1234");
     take->trigger();
@@ -252,13 +266,15 @@ static int exercise(QApplication &app) {
 
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
-    app.setQuitOnLastWindowClosed(false);
+    QApplication::setQuitOnLastWindowClosed(false);
     try {
-        if (app.arguments().size() == 3 && app.arguments()[1] == "--client")
-            return runClient(app, app.arguments()[2]);
-        return exercise(app);
+        const auto args = QCoreApplication::arguments();
+        if (args.size() == 3 && args[1] == "--client") {
+            return runClient(app, args[2]);
+        }
+        return exercise();
     } catch (const std::exception &error) {
-        fprintf(stderr, "FAIL: %s\n", error.what());
+        std::cerr << "FAIL: " << error.what() << '\n';
         return 1;
     }
 }

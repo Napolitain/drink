@@ -5,11 +5,16 @@ class ScreenSaver : public QObject {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.freedesktop.ScreenSaver")
 public:
-    bool locked = true;
-public slots:
-    bool GetActive() const { return locked; }
+    void unlock() {
+        locked = false;
+        emit ActiveChanged(false);
+    }
+    [[nodiscard]] Q_SLOT bool GetActive() const { return locked; }
 signals:
     void ActiveChanged(bool active);
+
+private:
+    bool locked = true;
 };
 
 class LoginManager : public QObject {

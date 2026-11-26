@@ -32,7 +32,7 @@ public:
     }
 
 protected:
-    void paintEvent(QPaintEvent *) override {
+    void paintEvent(QPaintEvent * /*event*/) override {
         QPainter painter(this);
         painter.fillRect(QRect(QPoint(), size()), QColor("#0e1f24"));
         const int unit = std::clamp(width() / 22, 12, 48);
@@ -41,38 +41,41 @@ protected:
         font.setWeight(QFont::DemiBold);
         painter.setFont(font);
         painter.setPen(Qt::white);
-        painter.drawText(QRect(0, 0, width(), height() / 2),
+        const int halfHeight = height() / 2;
+        painter.drawText(QRect(0, 0, width(), halfHeight),
                          Qt::AlignBottom | Qt::AlignHCenter, "Get some water.");
         font.setPixelSize(unit * 2 / 3);
         font.setWeight(QFont::Normal);
         painter.setFont(font);
         painter.setPen(QColor("#d5dcdc"));
-        painter.drawText(QRect(0, height() / 2 + 10, width(), height() / 2),
+        painter.drawText(QRect(0, halfHeight + 10, width(), halfHeight),
                          Qt::AlignTop | Qt::AlignHCenter,
                          "Look away and blink.");
     }
 
     void keyPressEvent(QKeyEvent *key) override {
         if (key->key() == Qt::Key_Escape && !key->isAutoRepeat() &&
-            !hold.isActive())
+            !hold.isActive()) {
             hold.start();
+        }
     }
     void keyReleaseEvent(QKeyEvent *key) override {
-        if (key->key() == Qt::Key_Escape && !key->isAutoRepeat())
+        if (key->key() == Qt::Key_Escape && !key->isAutoRepeat()) {
             hold.stop();
+        }
     }
-    void focusOutEvent(QFocusEvent *) override { hold.stop(); }
+    void focusOutEvent(QFocusEvent * /*event*/) override { hold.stop(); }
 
 private:
     QTimer hold;
 };
 
-void BreakWindows::sync(bool visible) {
+void BreakWindows::sync(bool shouldShow) {
     const auto screens = QGuiApplication::screens();
     std::erase_if(windows, [&](const auto &entry) {
-        return !visible || !screens.contains(entry.first);
+        return !shouldShow || !screens.contains(entry.first);
     });
-    if (visible) {
+    if (shouldShow) {
         for (auto *screen : screens) {
             if (!screen->name().isEmpty() && !windows.contains(screen)) {
                 auto window = std::make_unique<BreakWindow>(screen, this);

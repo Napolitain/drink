@@ -17,9 +17,10 @@ Drink::Drink(AppImageUpdate *updates, std::function<std::uint64_t()> clock)
             &Drink::finishBreak);
     connect(
         qApp, &QGuiApplication::focusWindowChanged, this,
-        [this](QWindow *window) {
-            if (!window && !foreground.available)
+        [this](const QWindow *window) {
+            if (window == nullptr && !foreground.isAvailable()) {
                 finishBreak();
+            }
         },
         Qt::QueuedConnection);
     connect(qApp, &QGuiApplication::screenAdded, this, &Drink::update);
@@ -41,34 +42,37 @@ void Drink::finishBreak() {
 void Drink::setupMenu(AppImageUpdate *updates) {
     tray.setStandardActionsEnabled(false);
     tray.setIsMenu(true);
-    tray.setTitle(qApp->applicationName());
+    tray.setTitle(QCoreApplication::applicationName());
     tray.setIconByPixmap(QIcon(":/drink/drink.svg"));
     tray.setStatus(KStatusNotifierItem::Active);
     auto &menu = *tray.contextMenu();
     status = menu.addAction(QString());
     micStatus = menu.addAction("Microphone status unavailable");
     gameStatus = menu.addAction("Foreground game status unavailable");
-    for (auto *label : {status, micStatus, gameStatus})
+    for (auto *label : {status, micStatus, gameStatus}) {
         label->setEnabled(false);
+    }
     menu.addSeparator();
     menu.addAction("Take break now", this, [this] {
         scheduler->request_break(now(), present(), blocked());
         update();
     });
     pause = menu.addAction("Pause for 1 hour", this, [this] {
-        if (scheduler->paused())
+        if (scheduler->paused()) {
             scheduler->restart(now());
-        else
+        } else {
             scheduler->pause(now());
+        }
         update();
     });
     menu.addSeparator();
-    if (updates && updates->enabled()) {
+    if (updates != nullptr && updates->enabled()) {
         auto *action = menu.addAction(updates->menuText(), updates, [updates] {
-            if (updates->ready())
+            if (updates->ready()) {
                 updates->restartIfReady();
-            else
+            } else {
                 updates->check();
+            }
         });
         auto refresh = [updates, action] {
             action->setText(updates->menuText());
@@ -79,7 +83,7 @@ void Drink::setupMenu(AppImageUpdate *updates) {
                 &AppImageUpdate::restartIfReady);
         refresh();
     }
-    menu.addAction("Quit " + qApp->applicationName(), qApp,
+    menu.addAction("Quit " + QCoreApplication::applicationName(), qApp,
                    &QCoreApplication::quit);
     connect(&menu, &QMenu::aboutToShow, this, &Drink::refreshMenu);
 }
@@ -117,11 +121,11 @@ std::uint64_t Drink::monotonicMilliseconds() {
 
 bool Drink::present() const {
     return session.present() &&
-           std::ranges::any_of(qApp->screens(),
+           std::ranges::any_of(QGuiApplication::screens(),
                                [](auto *s) { return !s->name().isEmpty(); });
 }
 bool Drink::blocked() const {
-    return audio == drink::Activity::Active || foreground.active;
+    return audio == drink::Activity::Active || foreground.gameActive();
 }
 
 void Drink::update() {
@@ -132,38 +136,41 @@ void Drink::update() {
     windows.sync(scheduler->visible());
     const auto deadline = scheduler->deadline();
     timer.stop();
-    if (deadline) {
+    if (deadline != 0) {
         const auto current = now();
         timer.start(
             static_cast<int>(deadline > current ? deadline - current : 0));
     }
     refreshMenu();
     if (wasVisible && !scheduler->visible() && !scheduler->paused() &&
-        !scheduler->pending() && here && !busy)
+        !scheduler->pending() && here && !busy) {
         emit breakFinished();
+    }
 }
 
 void Drink::refreshMenu() {
-    const auto time = now(), end = scheduler->deadline();
+    const auto time = now();
+    const auto end = scheduler->deadline();
     const auto minutes = end > time ? (end - time + 59999) / 60000 : 0;
     QString text;
-    if (scheduler->paused())
+    if (scheduler->paused()) {
         text = QString("Paused · %1 min left").arg(minutes);
-    else if (!present())
+    } else if (!present()) {
         text = "Waiting for your return";
-    else if (scheduler->visible())
+    } else if (scheduler->visible()) {
         text = "Water break · hold Esc to end";
-    else if (!scheduler->pending())
+    } else if (!scheduler->pending()) {
         text = QString("Next break in %1 min").arg(minutes);
-    else if (audio == drink::Activity::Active)
+    } else if (audio == drink::Activity::Active) {
         text = "Break due · microphone in use";
-    else if (foreground.active)
+    } else if (foreground.gameActive()) {
         text = "Break due · game in foreground";
-    else
+    } else {
         text = "Break due · waiting for ten quiet seconds";
+    }
     status->setText(text);
     pause->setText(scheduler->paused() ? "Resume" : "Pause for 1 hour");
     micStatus->setVisible(audio == drink::Activity::Unavailable);
-    gameStatus->setVisible(!foreground.available);
+    gameStatus->setVisible(!foreground.isAvailable());
 }
 } // namespace kde

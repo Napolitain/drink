@@ -26,15 +26,15 @@ jobs:
                   sudo apt-get install -y --no-install-recommends qt6-base-dev qt6-wayland qt6-svg-plugins \
                     layer-shell-qt liblayershellqtinterface-dev libkf6service-dev libkf6statusnotifieritem-dev \
                     libpipewire-0.3-dev kwin-wayland pipewire-bin libspa-0.2-modules dbus-daemon libgl1-mesa-dri \
-                    desktop-file-utils openssh-client curl file clang-21 clang-tidy-21 llvm-21 libclang-rt-21-dev jq
+                    desktop-file-utils openssh-client curl file clang-21 clang-tidy-21 llvm-21 libclang-rt-21-dev jq cppcheck
             - name: Test the reminder, release handoff and signed updater
               run: |
                   linux/build
                   linux/tests/plasma-session
-            - name: Check native C++ coverage and cognitive complexity
-              run: |
-                  linux/tests/coverage
-                  linux/tests/complexity target/linux-coverage
+            - name: Measure native C++ coverage
+              run: linux/tests/coverage
+            - name: Run clang-tidy and cppcheck on the Qt build
+              run: linux/tests/lint target/linux-coverage
             - name: Build and exercise the release image in private KWin
               env:
                   TAG: ${{ inputs.tag }}

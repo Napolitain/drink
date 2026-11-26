@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDBusContext>
+#include <QDBusServiceWatcher>
 #include <QObject>
 #include <QTemporaryFile>
 #include <QTimer>
@@ -17,22 +18,24 @@ class Foreground : public QObject, protected QDBusContext {
 public:
     Foreground();
     ~Foreground() override;
-    bool available = false;
-    bool active = false;
+    [[nodiscard]] bool isAvailable() const { return available; }
+    [[nodiscard]] bool gameActive() const { return active; }
+    Q_SCRIPTABLE Q_SLOT void report(const QString &desktopFile,
+                                    const QString &resourceClass, int pid);
 
 signals:
     void changed();
     void otherAppActivated();
 
-public slots:
-    Q_SCRIPTABLE void report(const QString &desktopFile,
-                             const QString &resourceClass, int pid);
-
 private:
+    Q_DISABLE_COPY_MOVE(Foreground)
     void attach();
     QTemporaryFile script;
     QTimer retry;
     QString owner;
     QStringList configured;
+    QDBusServiceWatcher watch;
+    bool available = false;
+    bool active = false;
 };
 } // namespace kde

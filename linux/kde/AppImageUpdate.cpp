@@ -26,22 +26,25 @@ QString runningImage() {
     const auto version = QCoreApplication::applicationVersion();
     const auto date = QDate::fromString(version, "yyyy.MM.dd");
     if (!QDir::isAbsolutePath(appdir) || !QDir::isAbsolutePath(outer) ||
-        !date.isValid() || date.toString("yyyy.MM.dd") != version)
+        !date.isValid() || date.toString("yyyy.MM.dd") != version) {
         return {};
+    }
     const auto executable =
         QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
     if (executable.isEmpty() ||
         executable !=
-            QFileInfo(appdir + "/usr/bin/drink-kde").canonicalFilePath())
+            QFileInfo(appdir + "/usr/bin/drink-kde").canonicalFilePath()) {
         return {};
+    }
     return QFileInfo(outer).canonicalFilePath();
 }
 } // namespace
 
 AppImageUpdate::AppImageUpdate(QObject *parent)
     : QObject(parent), image(runningImage()) {
-    if (!enabled())
+    if (!enabled()) {
         return;
+    }
     struct stat info{};
     if (::stat(QFile::encodeName(image).constData(), &info) != 0 ||
         !S_ISREG(info.st_mode)) {
@@ -101,14 +104,16 @@ QProcessEnvironment AppImageUpdate::hostEnvironment() {
     for (const QString &name :
          {QString("QT_PLUGIN_PATH"), QString("QT_QPA_PLATFORM_PLUGIN_PATH")}) {
         const auto saved = "DRINK_ORIGINAL_" + name;
-        if (env.contains(saved))
+        if (env.contains(saved)) {
             env.insert(name, env.value(saved));
-        else
+        } else {
             env.remove(name);
+        }
         env.remove(saved);
     }
-    for (const auto *name : {"APPIMAGE", "APPDIR", "ARGV0", "OWD"})
+    for (const auto *name : {"APPIMAGE", "APPDIR", "ARGV0", "OWD"}) {
         env.remove(name);
+    }
     return env;
 }
 
@@ -134,8 +139,9 @@ void AppImageUpdate::setState(State value) {
 }
 
 void AppImageUpdate::check() {
-    if (!enabled() || checking() || ready())
+    if (!enabled() || checking() || ready()) {
         return;
+    }
     const auto helper = resource(":/drink/update-appimage");
     const auto signers = resource(":/drink/release-signers").trimmed();
     if (helper.isEmpty() || signers.isEmpty()) {
@@ -150,7 +156,8 @@ void AppImageUpdate::check() {
 }
 
 void AppImageUpdate::restartIfReady() {
-    if (ready())
+    if (ready()) {
         emit restartRequested(image);
+    }
 }
 } // namespace kde

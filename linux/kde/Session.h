@@ -1,4 +1,5 @@
 #pragma once
+#include <QDBusServiceWatcher>
 #include <QObject>
 #include <QTimer>
 
@@ -7,19 +8,18 @@ class Session : public QObject {
     Q_OBJECT
 public:
     Session();
-    bool present() const { return unlocked && !sleeping; }
+    [[nodiscard]] bool present() const { return unlocked && !sleeping; }
 
 signals:
     void changed();
 
-private slots:
-    void locked(bool active);
-    void sleep(bool active);
-    void readLock();
-
 private:
+    Q_SLOT void locked(bool active);
+    Q_SLOT void sleep(bool active);
+    void readLock();
     bool unlocked = false;
     bool sleeping = false;
     QTimer retry;
+    QDBusServiceWatcher watch;
 };
 } // namespace kde

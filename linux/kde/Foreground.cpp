@@ -24,8 +24,9 @@ static QDBusMessage scriptCall(const QString &method,
 }
 
 static bool hasGameCategory(const QString &id) {
-    if (id.isEmpty())
+    if (id.isEmpty()) {
         return false;
+    }
     const auto service = KService::serviceByDesktopName(id);
     return service && service->categories().contains("Game");
 }
@@ -33,44 +34,50 @@ static bool hasGameCategory(const QString &id) {
 bool isGame(const QString &desktopFile, const QString &resourceClass,
             const QStringList &configured) {
     QString app = QFileInfo(desktopFile).fileName();
-    if (app.endsWith(".desktop"))
+    if (app.endsWith(".desktop")) {
         app.chop(8);
+    }
     const QStringList ids{app, resourceClass};
     static const QRegularExpression steamGame(
         "^steam_app_[1-9][0-9]*$", QRegularExpression::CaseInsensitiveOption);
-    for (const auto &id : ids) {
-        if (!id.isEmpty() && (configured.contains(id, Qt::CaseInsensitive) ||
-                              steamGame.match(id).hasMatch()))
-            return true;
+    const auto isProtected = [&configured](const QString &id) {
+        return !id.isEmpty() && (configured.contains(id, Qt::CaseInsensitive) ||
+                                 steamGame.match(id).hasMatch());
+    };
+    if (std::ranges::any_of(ids, isProtected)) {
+        return true;
     }
-    for (const auto &id : ids) {
-        if (id.compare("steam", Qt::CaseInsensitive) == 0 ||
-            id.compare("com.valvesoftware.Steam", Qt::CaseInsensitive) == 0)
-            return false;
-    }
-    return std::ranges::any_of(ids, hasGameCategory);
+    const auto isSteamLauncher = [](const QString &id) {
+        return id.compare("steam", Qt::CaseInsensitive) == 0 ||
+               id.compare("com.valvesoftware.Steam", Qt::CaseInsensitive) == 0;
+    };
+    return std::ranges::none_of(ids, isSteamLauncher) &&
+           std::ranges::any_of(ids, hasGameCategory);
 }
 
 Foreground::Foreground()
     : script(QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) +
-             "/drink-XXXXXX.js") {
-    configured = QSettings().value("ProtectedGames").toStringList();
+             "/drink-XXXXXX.js"),
+      configured(QSettings().value("ProtectedGames").toStringList()),
+      watch(kwin, QDBusConnection::sessionBus(),
+            QDBusServiceWatcher::WatchForOwnerChange) {
     auto bus = QDBusConnection::sessionBus();
     QFile source(":/drink/foreground.js");
-    if (!source.open(QIODevice::ReadOnly) || !script.open())
+    if (!source.open(QIODevice::ReadOnly) || !script.open()) {
         return;
+    }
     const QByteArray contents =
         "const drinkPid = " +
         QByteArray::number(QCoreApplication::applicationPid()) + ";\n" +
         source.readAll();
     if (script.write(contents) != contents.size() || !script.flush() ||
         !bus.registerObject("/Foreground", this,
-                            QDBusConnection::ExportScriptableSlots))
+                            QDBusConnection::ExportScriptableSlots)) {
         return;
-    auto *watch = new QDBusServiceWatcher(
-        kwin, bus, QDBusServiceWatcher::WatchForOwnerChange, this);
-    connect(watch, &QDBusServiceWatcher::serviceOwnerChanged, this, [this] {
-        available = active = false;
+    }
+    connect(&watch, &QDBusServiceWatcher::serviceOwnerChanged, this, [this] {
+        available = false;
+        active = false;
         emit changed();
         attach();
     });
@@ -84,13 +91,15 @@ void Foreground::attach() {
     auto bus = QDBusConnection::sessionBus();
     owner = bus.interface()->serviceOwner(kwin).value();
     retry.start();
-    if (owner.isEmpty())
+    if (owner.isEmpty()) {
         return;
+    }
     // Remove a previous instance's observer after an unclean exit.
     scriptCall("unloadScript", {busName});
     QDBusReply<int> id = scriptCall("loadScript", {script.fileName(), busName});
-    if (!id.isValid() || id.value() < 0)
+    if (!id.isValid() || id.value() < 0) {
         return;
+    }
     auto run = QDBusMessage::createMethodCall(
         kwin, QString("/Scripting/Script%1").arg(id.value()),
         "org.kde.kwin.Script", "run");
@@ -99,8 +108,9 @@ void Foreground::attach() {
 
 void Foreground::report(const QString &desktopFile,
                         const QString &resourceClass, int pid) {
-    if (!calledFromDBus() || message().service() != owner)
+    if (!calledFromDBus() || message().service() != owner) {
         return;
+    }
     retry.stop();
     const bool game = isGame(desktopFile, resourceClass, configured);
     if (!available || active != game) {
@@ -108,13 +118,18 @@ void Foreground::report(const QString &desktopFile,
         available = true;
         emit changed();
     }
-    if (pid > 0 && pid != QCoreApplication::applicationPid())
+    if (pid > 0 && pid != QCoreApplication::applicationPid()) {
         emit otherAppActivated();
+    }
 }
 
 Foreground::~Foreground() {
-    if (!owner.isEmpty())
+    if (!owner.isEmpty()) {
         scriptCall("unloadScript", {busName});
-    QDBusConnection::sessionBus().unregisterObject("/Foreground");
+    }
+    auto bus = QDBusConnection::sessionBus();
+    if (bus.objectRegisteredAt("/Foreground") == this) {
+        bus.unregisterObject("/Foreground");
+    }
 }
 } // namespace kde

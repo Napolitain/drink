@@ -1,27 +1,2 @@
 #!/usr/bin/env bash
-set -euo pipefail
-cd -P "$(dirname "$0")/../.."
-build=$(realpath "${1:-target/linux-coverage}")
-database=$build/compile_commands.json
-if [[ ! -s $database ]]; then
-    echo 'Run linux/tests/coverage first to generate the Clang compilation database and headers.' >&2
-    exit 1
-fi
-
-# ClangTool processes every compile command for each selected source, including
-# the Dev and AppImage variants of main.cpp. Skip generated Qt and CXX code.
-sources=$(jq -r --arg source "$PWD/linux/" --arg build "$build/" '
-    [.[].file | select(startswith($source) and endswith(".cpp") and (startswith($build) | not))]
-    | unique[]' "$database")
-if [[ -z $sources ]]; then
-    echo 'The compilation database has no Drink Linux sources.' >&2
-    exit 1
-fi
-mapfile -t files <<<"$sources"
-path_regex() { realpath "$1" | sed 's/[][(){}.^$?+*\\|]/\\&/g'; }
-tidy=$(command -v clang-tidy-21 || command -v clang-tidy)
-check=readability-function-cognitive-complexity
-"$tidy" -p "$build" --quiet --checks="-*,$check" --warnings-as-errors="$check" \
-    --config="{CheckOptions: {$check.Threshold: 15}}" \
-    --header-filter="^$(path_regex linux)/" --exclude-header-filter="^$(path_regex "$build")/" \
-    "${files[@]}"
+exec "$(dirname "$0")/lint" --complexity-only "$@"
