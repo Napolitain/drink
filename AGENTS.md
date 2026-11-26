@@ -127,12 +127,15 @@ prek run -a
 prek run -a --hook-stage pre-push
 cargo build --release
 macos/build  # on macOS with Apple Command Line Tools
+windows/build.ps1  # on Windows with the Visual Studio C++ build tools and PowerShell 7.3+
 ```
 
 Use `cargo test --all-targets --all-features` for focused iteration. Hooks run
 rustfmt, Clippy autofixes, Clippy with warnings denied, and cargo-llvm-cov with
-all targets/features and an 80% line coverage gate. Keep entry points thin:
-`src/main.rs` and `src/bin/` are excluded from the coverage gate. Preserve the
+all targets/features and an 80% line coverage gate across the workspace except
+the CXX bridge. The Windows adapter's Win32 modules compile, and are measured,
+only on Windows. Keep entry points thin: `src/main.rs` and `src/bin/` are
+excluded from the coverage gate in every package. Preserve the
 unsafe-code prohibition, enabled lint groups and cognitive complexity limit of 15.
 Commit proptest regression cases so failures are replayed.
 
@@ -145,4 +148,8 @@ Retain the release profile's fat LTO, single codegen unit, strip and panic setti
 unless a measured requirement justifies changing them. Build for the architecture's
 portable baseline. The shared core forbids unsafe Rust. The separate macOS bridge
 uses CXX to generate the native interface. Build and sign-check the app bundle
-after changing that interface or the Objective-C++ adapter.
+after changing that interface or the Objective-C++ adapter. The Windows adapter
+denies unsafe code except in its Win32 modules, where every block carries a
+`SAFETY` comment, and links the C runtime statically. Run
+`windows/build.ps1 -SmokeTest` after changing its windows, focus or timer
+handling.

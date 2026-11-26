@@ -1,6 +1,6 @@
 # Drink
 
-Drink is a water-break reminder. The first working adapter is a native macOS menu-bar app. Windows and Linux adapters are planned. Every 30 minutes it covers the displays for 30 seconds so you can get water, blink and look away. When a reminder falls during a call or game, it waits for a suitable moment. KDE Plasma is the first Linux target.
+Drink is a water-break reminder. Native adapters run in the macOS menu bar and the Windows 11 notification area. A Linux adapter is planned. Every 30 minutes it covers the displays for 30 seconds so you can get water, blink and look away. When a reminder falls during a call or game, it waits for a suitable moment. KDE Plasma is the first Linux target.
 
 ## Run on macOS
 
@@ -24,15 +24,42 @@ The app observes Core Audio input activity, including virtual inputs, without re
 defaults write io.github.napolitain.drink ProtectedGameBundleIDs -array-add com.example.game
 ```
 
+## Run on Windows
+
+Drink runs on Windows 11. To build and open it, run the following command from the checkout with Rust, the Visual Studio C++ build tools and PowerShell 7.3 or newer installed:
+
+```powershell
+windows\build.ps1 -Dev
+```
+
+**Drink Dev** opens from `target\Drink Dev.exe` and uses its own preferences. Opening it again while it runs leaves the running copy in place. To build without opening it, run `windows\build.ps1`.
+
+Click the water drop in the notification area for the same menu as on macOS. Windows 11 may first place it in the overflow area; to keep it visible, turn it on under Settings → Personalization → Taskbar → Other system tray icons. Hold Escape for two seconds to end a visible break early. Switching to another app, or Alt+F4, also ends it. To launch at login, add a shortcut to `Drink.exe` in the folder that `shell:startup` opens.
+
+The app reads the state of audio sessions on every active capture device, including headsets that are not the default, without opening the microphone. Exclusive full-screen Direct3D apps and presentation mode defer breaks. To protect a game that runs in a window or borderless, add its executable name and relaunch Drink. Drink Dev reads the same value under `io.github.napolitain.drink.dev`.
+
+```powershell
+$key = 'HKCU:\Software\io.github.napolitain.drink'
+if (-not (Test-Path $key)) { New-Item -Path $key | Out-Null }
+$games = @((Get-ItemProperty -Path $key).ProtectedGameExecutables) + 'game.exe'
+Set-ItemProperty -Path $key -Name ProtectedGameExecutables -Type MultiString -Value ($games | Where-Object { $_ })
+```
+
 ## Weekly releases
 
-GitHub Actions checks `main` every Monday at 08:17 UTC. If the commit differs from the last published release and descends from it, CI tests the core and updater, builds the universal Mac app, signs the ZIP and publishes both assets together. The UTC release date supplies the tag, for example `v2026.11.25`. An unchanged week produces no release. A manual dispatch follows the same rules, including at most one release per UTC date. [Weekly release workflow](https://github.com/Napolitain/drink/actions/workflows/release.yml)
+GitHub Actions checks `main` every Monday at 08:17 UTC. If the commit differs from the last published release and descends from it, CI tests the core and both adapters, builds the universal Mac app and the x64 Windows executable, signs each ZIP and publishes all four assets together. The UTC release date supplies the tag, for example `v2026.11.25`. An unchanged week produces no release. A manual dispatch follows the same rules, including at most one release per UTC date. [Weekly release workflow](https://github.com/Napolitain/drink/actions/workflows/release.yml)
 
 The release signing key is stored in the repository Actions secret `DRINK_RELEASE_SIGNING_KEY`. The matching public key is in `macos/release-signers`. Keep the signer available across releases. To verify a downloaded archive using a trusted checkout:
 
 ```sh
 ssh-keygen -Y verify -f macos/release-signers -I drink -n drink-macos \
     -s Drink-macOS.zip.sig < Drink-macOS.zip
+```
+
+The Windows namespace includes the release version. For example, in PowerShell:
+
+```powershell
+cmd /c 'ssh-keygen -Y verify -f macos\release-signers -I drink -n drink-windows-x64-2026.12.07 -s Drink-Windows-x64.zip.sig < Drink-Windows-x64.zip'
 ```
 
 ## What a break feels like
@@ -54,10 +81,12 @@ Use one Rust scheduling core. It consumes clock, session, and activity events an
 
 The Mac adapter uses the AppKit run loop, one-shot timers and native display, session, foreground-app and Core Audio notifications. A failed audio subscription is retried. Objective-C++ calls the shared Rust scheduler through a small CXX bridge. The rendered message uses AppKit text controls. The core has zero runtime crate dependencies.
 
+The Windows adapter is Rust built on Microsoft's `windows` crate, so it calls the core directly. A hidden window owns a one-shot timer, the notification-area icon, session and display-power notifications, a foreground-change hook and Core Audio callbacks. Callbacks from other threads post messages to that window, so every decision runs on one thread. Portable policy, menu text and icon artwork are tested on every platform. Unsafe code is confined to the Win32 modules, and each block states why it is sound. Windows lets only the process with the latest input take keyboard focus. A timed break therefore sends an empty mouse input, which neither moves nor clicks, before taking focus. If Windows still refuses, nothing is shown and Drink retries. The message uses GDI text scaled for each display's DPI.
+
 | Target | PoC integration to validate |
 | --- | --- |
 | KDE Plasma on Wayland | Put PipeWire microphone detection in the shared Linux adapter. Follow active capture links to microphone sources, including headsets. Exclude speaker-monitor streams. Request a fullscreen surface on each output. Keep Plasma-specific placement or foreground-game detection in `linux/kde`. A small KWin script is an option if the compositor needs to supply focused-window information. [WirePlumber routing](https://pipewire.pages.freedesktop.org/wireplumber/policies/linking.html) · [Wayland fullscreen requests](https://wayland.app/protocols/xdg-shell#xdg_toplevel:request:set_fullscreen) · [KWin scripting API](https://develop.kde.org/docs/plasma/kwin/api/) |
-| Windows | Inspect audio sessions on active capture endpoints, including non-default devices. Use the shell's fullscreen Direct3D and presentation signals to defer. Match the foreground executable against configured games for borderless or windowed titles. Opening Steam alone should allow breaks. [Audio session states](https://learn.microsoft.com/en-us/windows/win32/api/audiosessiontypes/ne-audiosessiontypes-audiosessionstate) · [Shell notification states](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-query_user_notification_state) |
+| Windows | Inspect audio sessions on active capture endpoints, including non-default devices. Use the shell's fullscreen Direct3D and presentation signals to defer. Match the foreground executable against configured games for borderless or windowed titles. Opening Steam alone should allow breaks. Test typing into an editor as a break appears, headset changes and per-monitor DPI on multiple displays. [Audio session states](https://learn.microsoft.com/en-us/windows/win32/api/audiosessiontypes/ne-audiosessiontypes-audiosessionstate) · [Shell notification states](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-query_user_notification_state) |
 | macOS | Check Core Audio input activity and associated devices. Use borderless windows in the current Space, including when another app is fullscreen. Test headset changes and multiple displays with separate Spaces. Allow configured foreground game apps to defer. [Core Audio input activity](https://developer.apple.com/documentation/coreaudio/kaudioprocesspropertyisrunninginput) · [AppKit window behaviors](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct) |
 
 GNOME and Hyprland can reuse the Linux audio and scheduling work. Add `linux/gnome` or `linux/hyprland` only when there is desktop-specific behavior to implement and a session to test it on. Start on Plasma Wayland. Verify X11 separately before claiming it works. Across all platforms, read activity metadata without opening the microphone. Mic activity can persist while a conferencing app is muted, or disappear while the user is still in the meeting.
@@ -85,9 +114,13 @@ Use a fake clock for the shared scheduler and property-test overlapping inhibito
 
 On an Apple Silicon Mac running macOS 27.2.1, the release app launched in the menu-bar session. The native smoke test verified a display-sized opaque window offscreen, a short Escape tap, a two-second Escape hold, an idle Core Audio reading and suppression of a due or manual break while locked. In the unlocked session, the accelerated timer covered the connected display, acquired keyboard focus, dismissed the overlay automatically and restored the previous foreground app. Take break now, Pause and Resume passed in the same session. A real call or headset change, a game, multiple monitors and fullscreen Spaces still need interactive verification.
 
+### First Windows run
+
+On an x64 PC with one display running Windows 11 Pro 10.0.26300, the native smoke test verified an opaque, display-sized break window created offscreen, a short Escape tap, a two-second Escape hold and an idle Core Audio reading. In the unlocked session, the accelerated timer covered the display, acquired keyboard focus, closed the break automatically and returned focus to the previous foreground app. Take break now, Pause and Resume passed in the same session. Opening a running build again exited at once and left the running copy in place. A real call or headset change, a game in each window mode, multiple monitors with mixed DPI, typing into an editor as a break appears, and locking or sleeping across a deadline still need interactive verification.
+
 ## Development baseline
 
-The Rust core follows [template-rust at f60084d](https://github.com/Napolitain/template-rust/tree/f60084dd74f9c80f6985059ab37a1f7f6a3ad5ad), including its toolchain, lint and release profiles, proptest, coverage and mutation testing. The macOS adapter uses the formatting rules from `template-cpp`. CXX generates the bridge in its own crate, keeping native dependencies out of the core. The default Cargo package is the core. CI is configured to test it on Linux, macOS and Windows and build the native app on macOS.
+The Rust core follows [template-rust at f60084d](https://github.com/Napolitain/template-rust/tree/f60084dd74f9c80f6985059ab37a1f7f6a3ad5ad), including its toolchain, lint and release profiles, proptest, coverage and mutation testing. The macOS adapter uses the formatting rules from `template-cpp`. CXX generates the bridge in its own crate, keeping native dependencies out of the core. The default Cargo packages are the core and the Windows adapter, whose Win32 modules compile only on Windows. CI is configured to test the core on Linux, macOS and Windows, lint and test the Windows adapter on Windows, and build the native apps on macOS and Windows. Windows builds link the C runtime statically, so `Drink.exe` needs no Visual C++ Redistributable.
 
 ```sh
 prek install
@@ -97,4 +130,4 @@ prek run --all-files --hook-stage pre-push
 prek run --hook-stage manual cargo-mutants --all-files
 ```
 
-Coverage requires cargo-llvm-cov and the pinned llvm-tools component. Mutation testing requires cargo-mutants. The interactive `macos/build --smoke-test` command launches a separate test bundle and briefly takes keyboard focus. It advances the clock to exercise the same timer, menu actions and windows as the real app. A protected session can skip the visual checks (exit 77).
+Coverage requires cargo-llvm-cov and the pinned llvm-tools component. The gate measures the whole workspace except the CXX bridge, so running the hooks on Windows also measures the Win32 modules. Mutation testing requires cargo-mutants. On Windows, `windows\build.ps1 -SmokeTest` runs the interactive smoke test with the same checks and exit codes as the macOS one. The interactive `macos/build --smoke-test` command launches a separate test bundle and briefly takes keyboard focus. It advances the clock to exercise the same timer, menu actions and windows as the real app. A protected session can skip the visual checks (exit 77).

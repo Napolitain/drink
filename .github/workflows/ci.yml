@@ -46,3 +46,11 @@ jobs:
               run: |
                   macos/build
                   macos/tests/release-update "target/Drink Dev.app"
+            # Linux CI lints only the portable modules of the Windows adapter.
+            - if: runner.os == 'Windows'
+              shell: pwsh
+              run: |
+                  $PSNativeCommandUseErrorActionPreference = $true
+                  cargo clippy --locked -p drink-windows --all-targets --all-features -- -D warnings
+                  cargo test --locked -p drink-windows
+                  windows/build.ps1

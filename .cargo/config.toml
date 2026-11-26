@@ -1,2 +1,7 @@
 [target.'cfg(target_os = "macos")']
 linker = "/usr/bin/cc"
+
+# Link the C runtime statically, so Drink.exe runs on a clean Windows install
+# without the Visual C++ Redistributable.
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
