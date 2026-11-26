@@ -4,9 +4,10 @@
 Build Drink for Windows.
 
 .DESCRIPTION
-Without options, builds target\Drink Dev.exe. -Dev also opens it. -SmokeTest
-builds and runs the interactive smoke test, which exits with 77 when the
-session cannot show a break. Setting DRINK_RELEASE_VERSION to YYYY.MM.DD builds the x64 release
+Without options, builds target\Drink Dev.exe. -Dev also opens it, which
+temporarily closes a running release. -SmokeTest builds and runs the
+interactive smoke test, which exits with 77 when the session cannot show a
+break. Setting DRINK_RELEASE_VERSION to YYYY.MM.DD builds the x64 release
 executable target\windows\x64\Drink.exe, which Windows on Arm runs through
 emulation.
 #>

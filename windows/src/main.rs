@@ -4,13 +4,18 @@
 #[cfg(windows)]
 fn main() -> std::process::ExitCode {
     use drink_windows::cli::{Mode, parse};
-    use drink_windows::{flavor::Flavor, print_to_console};
+    use drink_windows::{flavor::Flavor, instance, print_to_console};
 
     let flavor = Flavor::compiled();
     let code = match parse(std::env::args_os().skip(1)) {
         Mode::Run => run(flavor, false),
         Mode::Relaunch => run(flavor, true),
         Mode::CheckForUpdates => check_for_updates(flavor),
+        Mode::RestoreRelease {
+            session,
+            lock,
+            release,
+        } => instance::restore_release(session, lock, &release),
         Mode::Usage => {
             print_to_console("Usage: Drink.exe [--check-for-updates]", true);
             2
@@ -21,22 +26,29 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(windows)]
 fn run(flavor: drink_windows::flavor::Flavor, relaunch: bool) -> u8 {
-    use drink_windows::{app, instance::Instance, update};
+    use drink_windows::{app, instance, print_to_console, update};
     use std::time::Duration;
 
+    if flavor.release.is_none() {
+        return match instance::begin_development_session() {
+            Ok(_session) => app::run(flavor),
+            Err(message) => {
+                print_to_console(&message, true);
+                1
+            }
+        };
+    }
     // After an update, the previous instance needs a moment to exit.
     let wait = if relaunch {
         Duration::from_secs(10)
     } else {
         Duration::ZERO
     };
-    // A second launch of the same build leaves the running one in place.
-    let Some(_instance) = Instance::acquire(flavor.identifier, wait) else {
+    let Some(_instance) = instance::Instance::acquire(flavor.identifier, wait) else {
         return 0;
     };
-    if flavor.release.is_some()
-        && let Ok(exe) = std::env::current_exe()
-    {
+    instance::close_development_sessions();
+    if let Ok(exe) = std::env::current_exe() {
         update::clean(&exe);
     }
     app::run(flavor)

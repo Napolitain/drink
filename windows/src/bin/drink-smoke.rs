@@ -29,7 +29,7 @@ mod smoke {
     use drink_windows::app::{self, App, Handle, Options};
     use drink_windows::controller::Input;
     use drink_windows::flavor::Flavor;
-    use drink_windows::instance::Instance;
+    use drink_windows::instance;
     use drink_windows::overlay::{HOLD_MS, Overlay, WM_DISMISS, monitors};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
@@ -150,8 +150,7 @@ mod smoke {
     }
 
     pub fn run() -> Result<Finish, String> {
-        let _instance = Instance::acquire(Flavor::SMOKE.identifier, Duration::ZERO)
-            .ok_or("Another smoke test is running")?;
+        let _session = instance::begin_development_session()?;
         let handle =
             app::start(Flavor::SMOKE, Options::INTERACTIVE).map_err(|error| error.to_string())?;
         let started = handle.with(|app| app.now()).ok_or("the app is busy")?;
