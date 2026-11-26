@@ -98,8 +98,13 @@ pub struct Observations {
     pub microphone: Input,
     /// The microphone detector missed a subscription and should be sampled again.
     pub microphone_retry: bool,
-    /// The foreground app is a configured game.
+    /// A recognised game is in the foreground.
     pub game: bool,
+    /// Last keyboard use on the scheduler clock, recorded only while Drink
+    /// listens. `None` means Drink has not listened yet.
+    pub keyboard: Option<u64>,
+    /// Last mouse use on the scheduler clock, recorded only while Drink listens.
+    pub mouse: Option<u64>,
     /// Shell full-screen state.
     pub shell: Shell,
 }
@@ -112,6 +117,8 @@ impl Default for Observations {
             microphone: Input::Clear,
             microphone_retry: false,
             game: false,
+            keyboard: None,
+            mouse: None,
             shell: Shell::Clear,
         }
     }
@@ -124,10 +131,42 @@ impl Observations {
         self.absence.is_empty() && self.displays > 0
     }
 
-    /// Whether any known activity should defer a break.
+    /// Whether any known activity should defer a break at `now`.
     #[must_use]
-    pub const fn blocked(&self) -> bool {
-        matches!(self.microphone, Input::Active) || self.game || !matches!(self.shell, Shell::Clear)
+    pub const fn blocked(&self, now: u64) -> bool {
+        matches!(self.microphone, Input::Active)
+            || self.playing(now)
+            || !matches!(self.shell, Shell::Clear)
+    }
+
+    /// Whether a game is in front and in play: both the keyboard and the
+    /// mouse were used within [`PLAYING_WINDOW`]. Typing alone, as when
+    /// chatting after a match, or idling on a score screen is not play.
+    /// Before Drink has listened, a game in front counts as in play.
+    #[must_use]
+    pub const fn playing(&self, now: u64) -> bool {
+        if !self.game {
+            return false;
+        }
+        match (self.keyboard, self.mouse) {
+            (Some(keyboard), Some(mouse)) => {
+                now.saturating_sub(keyboard) < PLAYING_WINDOW
+                    && now.saturating_sub(mouse) < PLAYING_WINDOW
+            }
+            _ => true,
+        }
+    }
+
+    /// When play lapses unless the keyboard and mouse are used again.
+    #[must_use]
+    pub const fn playing_ends(&self) -> Option<u64> {
+        match (self.game, self.keyboard, self.mouse) {
+            (true, Some(keyboard), Some(mouse)) => {
+                let older = if keyboard < mouse { keyboard } else { mouse };
+                Some(older.saturating_add(PLAYING_WINDOW))
+            }
+            _ => None,
+        }
     }
 
     /// Record a session or power transition.
@@ -165,6 +204,10 @@ pub const URGENT_RETRY: u64 = 1_000;
 pub const IDLE_RETRY: u64 = 60_000;
 /// The shell sends no full-screen notifications, so a break it defers polls.
 pub const SHELL_POLL: u64 = 1_000;
+/// Keyboard and mouse use within this window, with a game in front, counts
+/// as play. With the scheduler's grace period, a due break shows once 30
+/// seconds pass without both.
+pub const PLAYING_WINDOW: u64 = 20_000;
 
 /// What the adapter should do after a scheduler step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,7 +250,7 @@ impl Controller {
     /// on screen before this step.
     pub fn update(&mut self, now: u64, seen: &Observations, overlay_shown: bool) -> Plan {
         let present = seen.present();
-        let blocked = seen.blocked();
+        let blocked = seen.blocked(now);
         self.scheduler.update(now, present, blocked);
         let s = &self.scheduler;
         Plan {
@@ -237,13 +280,19 @@ impl Controller {
         if s.pending() && seen.shell != Shell::Clear {
             sooner(now.saturating_add(SHELL_POLL));
         }
+        if s.pending()
+            && let Some(end) = seen.playing_ends()
+            && end > now
+        {
+            sooner(end);
+        }
         (deadline != 0).then(|| deadline.saturating_sub(now))
     }
 
     /// Ask for a break now, respecting presence and blockers.
     pub const fn request_break(&mut self, now: u64, seen: &Observations) {
         self.scheduler
-            .request_break(now, seen.present(), seen.blocked());
+            .request_break(now, seen.present(), seen.blocked(now));
     }
 
     /// Pause for an hour, or resume with a fresh interval when paused.
@@ -290,7 +339,7 @@ impl Controller {
         } else if s.visible() {
             "Water break · hold Esc to end".into()
         } else if s.pending() {
-            pending_reason(seen).into()
+            pending_reason(seen, now).into()
         } else {
             format!("Next break in {minutes} min")
         };
@@ -302,11 +351,11 @@ impl Controller {
     }
 }
 
-const fn pending_reason(seen: &Observations) -> &'static str {
+const fn pending_reason(seen: &Observations, now: u64) -> &'static str {
     if matches!(seen.microphone, Input::Active) {
         "Break due · microphone in use"
-    } else if seen.game {
-        "Break due · game in foreground"
+    } else if seen.playing(now) {
+        "Break due · game in progress"
     } else {
         match seen.shell {
             Shell::Direct3D => "Break due · full-screen game",
@@ -327,8 +376,96 @@ mod tests {
         microphone: Input::Clear,
         microphone_retry: false,
         game: false,
+        keyboard: None,
+        mouse: None,
         shell: Shell::Clear,
     };
+
+    /// A game in front, last used with the keyboard and mouse at these times.
+    const fn game(keyboard: u64, mouse: u64) -> Observations {
+        Observations {
+            game: true,
+            keyboard: Some(keyboard),
+            mouse: Some(mouse),
+            ..SEEN
+        }
+    }
+
+    #[test]
+    fn play_needs_both_keyboard_and_mouse_recently() {
+        let w = PLAYING_WINDOW;
+        assert!(!SEEN.playing(0), "no game in front");
+        assert!(
+            Observations { game: true, ..SEEN }.playing(0),
+            "not yet listened"
+        );
+        assert!(game(0, 0).playing(w - 1));
+        assert!(!game(0, 0).playing(w), "both idle for the window");
+        assert!(
+            !game(w, 0).playing(w),
+            "typing only, e.g. chat after a match"
+        );
+        assert!(
+            !game(0, w).playing(w),
+            "mouse only, e.g. reading the score screen"
+        );
+        assert!(game(5, 9).playing(w + 4));
+        assert_eq!(game(5, 9).playing_ends(), Some(5 + w));
+        assert_eq!(game(9, 5).playing_ends(), Some(5 + w));
+        assert_eq!(Observations { game: true, ..SEEN }.playing_ends(), None);
+        assert_eq!(
+            Observations {
+                game: false,
+                ..game(1, 1)
+            }
+            .playing_ends(),
+            None
+        );
+        assert!(game(0, 0).blocked(1) && !game(0, 0).blocked(w));
+    }
+
+    #[test]
+    fn a_break_waits_for_play_to_stop_then_shows() {
+        let w = PLAYING_WINDOW;
+        let mut c = Controller::new(0);
+        // Due while playing: wait, and wake when play would lapse.
+        let start = INTERVAL;
+        let plan = c.update(start, &game(start, start), false);
+        assert!(c.pending() && !plan.overlay);
+        assert_eq!(plan.wake, Some(w));
+        assert_eq!(
+            c.status(start, &game(start, start)).text,
+            "Break due · game in progress"
+        );
+        // Both still in use when the wake fires: wait again.
+        let busy = start + w;
+        assert_eq!(
+            c.update(busy, &game(busy - 1, busy - 2), false).wake,
+            Some(w - 2)
+        );
+        // Chat only: the mouse lapses, the grace period runs, then the break shows.
+        let typing = busy + w;
+        assert_eq!(
+            c.update(typing, &game(typing, busy - 2), false).wake,
+            Some(GRACE)
+        );
+        assert!(
+            c.update(typing + GRACE, &game(typing + GRACE, busy - 2), false)
+                .overlay
+        );
+    }
+
+    #[test]
+    fn play_resuming_during_the_grace_period_keeps_the_break_waiting() {
+        let mut c = Controller::new(0);
+        let idle = INTERVAL + PLAYING_WINDOW;
+        c.update(INTERVAL, &game(INTERVAL, INTERVAL), false);
+        c.update(idle, &game(INTERVAL, INTERVAL), false);
+        let resumed = idle + GRACE;
+        let plan = c.update(resumed, &game(resumed - 1, resumed - 1), false);
+        assert!(c.pending() && !plan.overlay);
+        assert_eq!(plan.wake, Some(PLAYING_WINDOW - 1));
+    }
 
     #[test]
     fn every_session_change_controls_presence() {
@@ -360,7 +497,7 @@ mod tests {
 
     #[test]
     fn microphone_games_and_shell_state_each_block() {
-        assert!(!SEEN.blocked());
+        assert!(!SEEN.blocked(0));
         for seen in [
             Observations {
                 microphone: Input::Active,
@@ -376,14 +513,14 @@ mod tests {
                 ..SEEN
             },
         ] {
-            assert!(seen.blocked(), "{seen:?}");
+            assert!(seen.blocked(0), "{seen:?}");
         }
         assert!(
             !Observations {
                 microphone: Input::Unavailable,
                 ..SEEN
             }
-            .blocked()
+            .blocked(0)
         );
     }
 
@@ -560,7 +697,7 @@ mod tests {
                     shell: Shell::Direct3D,
                     ..SEEN
                 },
-                "game in foreground",
+                "game in progress",
             ),
             (
                 Observations {

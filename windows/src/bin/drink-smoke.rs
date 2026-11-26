@@ -197,8 +197,9 @@ mod smoke {
         let (microphone, present, blocked) = handle
             .with(|app| {
                 app.update();
+                let now = app.now();
                 let seen = app.observations();
-                (seen.microphone, seen.present(), seen.blocked())
+                (seen.microphone, seen.present(), seen.blocked(now))
             })
             .ok_or("the app is busy")?;
         if microphone == Input::Active {

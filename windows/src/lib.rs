@@ -12,6 +12,8 @@ pub mod menu;
 pub mod release;
 
 #[cfg(windows)]
+mod activity;
+#[cfg(windows)]
 pub mod app;
 #[cfg(windows)]
 mod audio;

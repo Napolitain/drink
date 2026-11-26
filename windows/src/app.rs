@@ -3,6 +3,7 @@
 //! handled on its thread.
 #![allow(unsafe_code)]
 
+use crate::activity::{self, Device, Listener};
 use crate::audio::Microphone;
 use crate::controller::{Change, Controller, Observations, Status};
 use crate::flavor::Flavor;
@@ -27,6 +28,7 @@ use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Shell::NIN_SELECT;
+use windows::Win32::UI::WindowsAndMessaging::WM_INPUT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
     GetSystemMetrics, KillTimer, MSG, MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW,
@@ -51,6 +53,8 @@ const DAY_MS: u32 = 86_400_000;
 const DAY_TOLERANCE_MS: u32 = 300_000;
 /// Retry delay after Windows refused keyboard focus for a break.
 const FOCUS_RETRY: u64 = 1_000;
+/// How long the configured and Game Bar game lists are reused.
+const GAMES_REFRESH: Duration = Duration::from_secs(600);
 
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
@@ -86,6 +90,7 @@ enum Event {
     Updated(Outcome),
     Command(Command),
     Quit,
+    Input(Device),
 }
 
 impl Event {
@@ -115,6 +120,7 @@ impl Event {
             Self::Updated(outcome) => (10, (outcome as usize).cast_signed()),
             Self::Command(command) => (11, command as isize),
             Self::Quit => (12, 0),
+            Self::Input(device) => (13, isize::from(device == Device::Mouse)),
         }
     }
 
@@ -141,6 +147,11 @@ impl Event {
             10 => Self::Updated(Outcome::from_code(usize::try_from(data).ok()?)),
             11 => Self::Command(Command::from_id(u32::try_from(data).ok()?)?),
             12 => Self::Quit,
+            13 => Self::Input(if data == 0 {
+                Device::Keyboard
+            } else {
+                Device::Mouse
+            }),
             _ => return None,
         })
     }
@@ -178,6 +189,8 @@ unsafe fn decode(message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<Event> 
         WM_FOREGROUND => Event::Foreground,
         WM_UPDATED => Event::Updated(Outcome::from_code(wparam.0)),
         WM_EVENT => Event::unpack(wparam.0, lparam.0)?,
+        // SAFETY: forwarded from the caller; only the header is read.
+        WM_INPUT => Event::Input(unsafe { activity::device(lparam) }?),
         WM_CLOSE => Event::Quit,
         _ if message != 0 && message == TASKBAR_CREATED.load(Ordering::Relaxed) => {
             Event::TaskbarCreated
@@ -201,6 +214,9 @@ pub struct Options {
     /// Show break windows and take keyboard focus. Without it, break windows
     /// are created hidden, so tests never disturb the desktop.
     pub present: bool,
+    /// Listen for keyboard and mouse use while a due break waits on a game.
+    /// Without it, tests feed input events themselves.
+    pub listen: bool,
 }
 
 impl Options {
@@ -208,11 +224,13 @@ impl Options {
     pub const INTERACTIVE: Self = Self {
         tray: true,
         present: true,
+        listen: true,
     };
-    /// No icon and hidden break windows.
+    /// No icon, hidden break windows and no input listening.
     pub const HIDDEN: Self = Self {
         tray: false,
         present: false,
+        listen: false,
     };
 }
 
@@ -225,6 +243,9 @@ pub struct App {
     overlay: Overlay,
     microphone: Microphone,
     games: Vec<String>,
+    games_read: Instant,
+    listener: Option<Listener>,
+    observing: bool,
     updates: Option<Updates>,
     restarting: bool,
     clock_offset: u64,
@@ -333,6 +354,56 @@ impl App {
             self.restart_into_update();
         }
         self.schedule(wake);
+        self.follow_play();
+    }
+
+    /// Listen for keyboard and mouse use only while a due break waits on a
+    /// game in front, and forget it otherwise.
+    fn follow_play(&mut self) {
+        let wanted = self.controller.pending() && self.seen.game;
+        if wanted == self.observing {
+            return;
+        }
+        if wanted {
+            // If Windows refuses, a game in front stays protected, as before.
+            if !self
+                .listener
+                .as_mut()
+                .is_none_or(|listener| listener.listen(true))
+            {
+                return;
+            }
+            self.observing = true;
+            // Count the game as in play for one full window from now, then
+            // decide on the next step, which also schedules that wake.
+            let now = self.now();
+            (self.seen.keyboard, self.seen.mouse) = (Some(now), Some(now));
+            self.step();
+        } else {
+            if let Some(listener) = &mut self.listener {
+                listener.listen(false);
+            }
+            self.observing = false;
+            (self.seen.keyboard, self.seen.mouse) = (None, None);
+        }
+    }
+
+    fn record(&mut self, device: Device) {
+        if self.observing {
+            let now = Some(self.now());
+            match device {
+                Device::Keyboard => self.seen.keyboard = now,
+                Device::Mouse => self.seen.mouse = now,
+            }
+        }
+    }
+
+    /// Reread the configured and Game Bar game lists when they are stale.
+    fn refresh_games(&mut self) {
+        if self.games_read.elapsed() >= GAMES_REFRESH {
+            self.games = games(self.flavor);
+            self.games_read = Instant::now();
+        }
     }
 
     fn schedule(&self, wake: Option<u64>) {
@@ -350,13 +421,14 @@ impl App {
     }
 
     fn foreground_changed(&mut self) {
+        self.refresh_games();
         let Some(game) = foreground::foreground_game(&self.games) else {
             return self.update();
         };
         self.seen.game = game;
         self.observe();
         // Switching to another app must never leave opaque windows above it.
-        if !self.overlay.windows().is_empty() && !self.seen.blocked() {
+        if !self.overlay.windows().is_empty() && !self.seen.blocked(self.now()) {
             self.restart();
         } else {
             self.step();
@@ -441,6 +513,7 @@ impl App {
             Event::Command(Command::TogglePause) => self.toggle_pause(),
             Event::Command(Command::Updates) => self.request_updates(true),
             Event::Command(Command::Quit) | Event::Quit => return After::Quit,
+            Event::Input(device) => self.record(device),
         }
         After::Nothing
     }
@@ -559,7 +632,10 @@ pub fn start(flavor: Flavor, options: Options) -> windows::core::Result<Handle> 
         seen,
         overlay: Overlay::new(hwnd, options.present),
         microphone: Microphone::new(window, WM_AUDIO),
-        games: settings::protected_games(&flavor.registry_key()),
+        games: games(flavor),
+        games_read: Instant::now(),
+        listener: options.listen.then(|| Listener::new(hwnd)),
+        observing: false,
         updates: flavor.release.map(|_| Updates::default()),
         restarting: false,
         clock_offset: 0,
@@ -596,6 +672,14 @@ pub fn run(flavor: Flavor) -> u8 {
             1
         }
     }
+}
+
+/// Configured games, by name or path, then the games the Xbox Game Bar has
+/// recognised, by full path.
+fn games(flavor: Flavor) -> Vec<String> {
+    let mut games = settings::protected_games(&flavor.registry_key());
+    games.extend(settings::recognised_games(settings::GAME_BAR_GAMES));
+    games
 }
 
 fn create_window(flavor: Flavor) -> windows::core::Result<HWND> {
@@ -675,6 +759,10 @@ unsafe extern "system" fn procedure(
         return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
     };
     dispatch(WindowId::of(hwnd), event);
+    if message == WM_INPUT {
+        // SAFETY: WM_INPUT must reach DefWindowProc so Windows frees its data.
+        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    }
     LRESULT(isize::from(message == WM_POWERBROADCAST))
 }
 
@@ -695,9 +783,9 @@ unsafe extern "system" fn on_foreground(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controller::Absence;
+    use crate::controller::{Absence, PLAYING_WINDOW};
     use crate::overlay::monitors;
-    use drink_core::{BREAK, INTERVAL};
+    use drink_core::{BREAK, GRACE, INTERVAL};
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -715,7 +803,10 @@ mod tests {
     fn started(options: Options) -> Handle {
         let handle = start(TEST, options).unwrap_or_else(|error| panic!("{error}"));
         handle.with(|app| {
-            app.observations_mut().absence = Absence::default();
+            // Tests must not depend on the desktop: no absence, no game in front.
+            let seen = app.observations_mut();
+            seen.absence = Absence::default();
+            seen.game = false;
             app.update();
         });
         handle
@@ -735,7 +826,7 @@ mod tests {
     /// machine defers them.
     fn idle(handle: &Handle) -> bool {
         let idle = handle
-            .with(|app| app.observations().present() && !app.observations().blocked())
+            .with(|app| app.observations().present() && !app.observations().blocked(app.now()))
             .unwrap_or(false);
         if !idle {
             eprintln!("skipped: no display, or a microphone, game or full-screen app is active");
@@ -860,6 +951,56 @@ mod tests {
     }
 
     #[test]
+    fn a_break_due_during_play_shows_once_only_the_keyboard_is_used() {
+        let handle = started(Options::HIDDEN);
+        if !idle(&handle) {
+            return;
+        }
+        let input = |device| {
+            let (tag, data) = Event::Input(device).pack();
+            post_event(handle.window, tag, data);
+            assert!(handle.pump(Duration::from_millis(30)));
+        };
+        let advance = |by: u64| {
+            handle.with(|app| {
+                app.set_clock_offset(app.clock_offset() + by);
+                app.update();
+            });
+        };
+        // Foreground changes are not simulated: mark a game as in front.
+        handle.with(|app| {
+            app.observations_mut().game = true;
+            app.set_clock_offset(INTERVAL);
+            app.update();
+        });
+        let state = || {
+            handle
+                .with(|app| (app.controller().pending(), app.observing, windows_of(app)))
+                .unwrap_or_default()
+        };
+        assert_eq!(state(), (true, true, 0), "due in play: wait and listen");
+        assert_eq!(status(&handle), "Break due · game in progress");
+        input(Device::Keyboard);
+        input(Device::Mouse);
+        advance(PLAYING_WINDOW - 1_000);
+        assert_eq!(state(), (true, true, 0), "both in use: still waiting");
+        // Chat after the match: typing only.
+        input(Device::Keyboard);
+        advance(PLAYING_WINDOW);
+        assert!(state().0, "grace period");
+        advance(GRACE);
+        let (pending, observing, shown) = state();
+        assert!(
+            !pending && !observing && shown > 0,
+            "the break shows and listening stops"
+        );
+    }
+
+    fn windows_of(app: &App) -> usize {
+        app.break_windows().len()
+    }
+
+    #[test]
     fn session_and_power_changes_suppress_breaks() {
         let handle = started(Options::HIDDEN);
         let main = handle.window();
@@ -913,6 +1054,7 @@ mod tests {
         let handle = started(Options {
             tray: true,
             present: false,
+            listen: true,
         });
         let main = handle.window();
         send(main, WM_SETTINGCHANGE, 0, 0);
@@ -960,6 +1102,8 @@ mod tests {
             Event::Updated(Outcome::Installed),
             Event::Command(Command::Quit),
             Event::Quit,
+            Event::Input(Device::Keyboard),
+            Event::Input(Device::Mouse),
         ];
         for event in events.into_iter().chain(CHANGES.map(Event::Change)) {
             let (tag, data) = event.pack();
