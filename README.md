@@ -51,7 +51,7 @@ Set-ItemProperty -Path $key -Name ProtectedGameExecutables -Type MultiString -Va
 
 ## Weekly releases
 
-GitHub Actions checks `main` every Monday at 08:17 UTC. If the commit differs from the last published release and descends from it, CI tests the core and both adapters, builds the universal Mac app and the x64 Windows executable, signs each ZIP and publishes all four assets together. The UTC release date supplies the tag, for example `v2026.11.25`. An unchanged week produces no release. A manual dispatch follows the same rules, including at most one release per UTC date. [Weekly release workflow](https://github.com/Napolitain/drink/actions/workflows/release.yml)
+GitHub Actions checks `main` every Monday at 08:17 UTC. If the commit differs from the last published release and descends from it, CI tests the core and both adapters, builds the universal Mac app and the x64 Windows executable, signs each ZIP and publishes all four assets together. The UTC release date supplies the tag, for example `v2026.11.25`. An unchanged week produces no release. A manual dispatch follows the same rules, including at most one release per UTC date. Installed apps accept only `vYYYY.MM.DD` tags, so a second fix on the same day ships under the next date; a suffix such as `v2026.11.26.1` would make every existing install reject the latest release. [Weekly release workflow](https://github.com/Napolitain/drink/actions/workflows/release.yml)
 
 The release signing key is stored in the repository Actions secret `DRINK_RELEASE_SIGNING_KEY`. The matching public key is in `macos/release-signers`. Keep the signer available across releases. To verify a downloaded archive using a trusted checkout:
 
