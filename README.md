@@ -4,6 +4,10 @@ Drink is a water-break reminder. Native adapters run in the KDE Plasma system tr
 
 ## Run on KDE Plasma
 
+On x86-64 NixOS, run the native package with `nix run github:Napolitain/drink#drink-kde`. For a declarative install, add `inputs.drink.url = "github:Napolitain/drink";` to your flake and include `inputs.drink.packages.x86_64-linux.drink-kde` in your NixOS `environment.systemPackages` or Home Manager `home.packages`. Update the `drink` input and rebuild to upgrade. The version shown by `drink-kde --version` uses the source revision's date. The package installs the **Drink** launcher and icon. To launch at login, add **Drink** in System Settings → Autostart.
+
+### Develop from a checkout
+
 Build from the checkout with the pinned Rust toolchain, a C++20 compiler, CMake, pkg-config, Qt 6, LayerShellQt 6.6 or newer, KDE Frameworks 6 KService and KStatusNotifierItem (6.14+), and the PipeWire development files. On Kubuntu 26.04 the development packages include `qt6-base-dev`, `liblayershellqtinterface-dev`, `libkf6service-dev`, `libkf6statusnotifieritem-dev` and `libpipewire-0.3-dev`. Run the executable inside your Plasma Wayland session.
 
 ```sh
@@ -14,7 +18,9 @@ linux/build --dev
 
 To build a dated release locally, run `DRINK_RELEASE_VERSION=YYYY.MM.DD linux/build` with the release date, then open `target/linux-release/drink-kde`. If you still have the original source-only preview running, quit it from the tray once to enable switching between the two builds.
 
-On NixOS with the repository's Rust toolchain available, build with `nix-shell -p kdePackages.layer-shell-qt kdePackages.kservice kdePackages.kstatusnotifieritem qt6.qtbase pipewire pkg-config cmake --run linux/build`. To install the development executable, launcher and icon under your account, run `cmake --install target/linux --prefix "$HOME/.local"` and make sure `~/.local/bin` is on your desktop session's PATH. To launch the installed release at login, add **Drink** in System Settings → Autostart.
+On NixOS with the repository's Rust toolchain available, build with `nix-shell -p kdePackages.layer-shell-qt kdePackages.kservice kdePackages.kstatusnotifieritem qt6.qtbase pipewire pkg-config cmake --run linux/build`. To install the development executable, launcher and icon under your account, run `cmake --install target/linux --prefix "$HOME/.local"` and make sure `~/.local/bin` is on your desktop session's PATH.
+
+### Tray and game settings
 
 Open the water drop in the system tray for **Take break now**, **Pause for 1 hour**, **Resume** or **Quit Drink**. Hold Escape for two seconds to end a break early. Drink observes active PipeWire routes from audio sources, including non-default headsets. Recording a speaker monitor allows breaks. A KWin script observes the foreground app while Drink runs. It recognizes desktop entries in the Game category and Steam game window classes such as `steam_app_1234`. The Steam launcher alone allows breaks.
 
