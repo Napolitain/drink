@@ -7,14 +7,16 @@ use crate::audio::Microphone;
 use crate::controller::{Change, Controller, Observations, Status};
 use crate::flavor::Flavor;
 use crate::foreground::{self, Hook};
-use crate::menu::{self, Command, Entry};
+use crate::menu::{self, Command, Entry, Outcome, Request, Updates};
 use crate::overlay::{Overlay, WM_DISMISS};
 use crate::session::{self, Registration};
 use crate::settings;
 use crate::tray::{self, Tray};
+use crate::update;
 use crate::win::{WindowId, clock_ms};
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
+use std::sync::PoisonError;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -28,21 +30,25 @@ use windows::Win32::UI::Shell::NIN_SELECT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
     GetSystemMetrics, KillTimer, MSG, MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW,
-    PostQuitMessage, QS_ALLINPUT, RegisterClassW, RegisterWindowMessageW, SM_CMONITORS, SetTimer,
-    TranslateMessage, USER_TIMER_MAXIMUM, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY,
-    WM_DISPLAYCHANGE, WM_DPICHANGED, WM_POWERBROADCAST, WM_QUIT, WM_SETTINGCHANGE, WM_TIMER,
-    WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    PostQuitMessage, QS_ALLINPUT, RegisterClassW, RegisterWindowMessageW, SM_CMONITORS,
+    SetCoalescableTimer, SetTimer, TranslateMessage, USER_TIMER_MAXIMUM, WM_APP, WM_CLOSE,
+    WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_POWERBROADCAST, WM_QUIT,
+    WM_SETTINGCHANGE, WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
 const WM_TRAY: u32 = WM_APP + 2;
 const WM_AUDIO: u32 = WM_APP + 3;
 const WM_FOREGROUND: u32 = WM_APP + 4;
+const WM_UPDATED: u32 = WM_APP + 5;
 const WM_EVENT: u32 = WM_APP + 6;
 /// `NIN_SELECT | NINF_KEY`: the icon was chosen with the keyboard.
 const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
 
 const TIMER_UPDATE: usize = 1;
+const TIMER_DAILY: usize = 2;
+const DAY_MS: u32 = 86_400_000;
+const DAY_TOLERANCE_MS: u32 = 300_000;
 /// Retry delay after Windows refused keyboard focus for a break.
 const FOCUS_RETRY: u64 = 1_000;
 
@@ -68,6 +74,7 @@ const CHANGES: [Change; 8] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Event {
     Tick,
+    Daily,
     Change(Change),
     Displays,
     Theme,
@@ -76,6 +83,7 @@ enum Event {
     Menu { x: i16, y: i16 },
     Audio,
     Foreground,
+    Updated(Outcome),
     Command(Command),
     Quit,
 }
@@ -85,6 +93,7 @@ impl Event {
     fn pack(self) -> (usize, isize) {
         match self {
             Self::Tick => (0, 0),
+            Self::Daily => (1, 0),
             Self::Change(change) => (
                 2,
                 CHANGES
@@ -103,6 +112,7 @@ impl Event {
             }
             Self::Audio => (8, 0),
             Self::Foreground => (9, 0),
+            Self::Updated(outcome) => (10, (outcome as usize).cast_signed()),
             Self::Command(command) => (11, command as isize),
             Self::Quit => (12, 0),
         }
@@ -116,6 +126,7 @@ impl Event {
         };
         Some(match tag {
             0 => Self::Tick,
+            1 => Self::Daily,
             2 => Self::Change(*CHANGES.get(usize::try_from(data).ok()?)?),
             3 => Self::Displays,
             4 => Self::Theme,
@@ -127,6 +138,7 @@ impl Event {
             },
             8 => Self::Audio,
             9 => Self::Foreground,
+            10 => Self::Updated(Outcome::from_code(usize::try_from(data).ok()?)),
             11 => Self::Command(Command::from_id(u32::try_from(data).ok()?)?),
             12 => Self::Quit,
             _ => return None,
@@ -143,6 +155,7 @@ unsafe fn decode(message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<Event> 
     let word = |value: usize, shift: u32| u16::try_from((value >> shift) & 0xFFFF).unwrap_or(0);
     Some(match message {
         WM_TIMER if wparam.0 == TIMER_UPDATE => Event::Tick,
+        WM_TIMER if wparam.0 == TIMER_DAILY => Event::Daily,
         WM_WTSSESSION_CHANGE => {
             Event::Change(session::session_change(u32::try_from(wparam.0).ok()?)?)
         }
@@ -163,6 +176,7 @@ unsafe fn decode(message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<Event> 
         },
         WM_AUDIO => Event::Audio,
         WM_FOREGROUND => Event::Foreground,
+        WM_UPDATED => Event::Updated(Outcome::from_code(wparam.0)),
         WM_EVENT => Event::unpack(wparam.0, lparam.0)?,
         WM_CLOSE => Event::Quit,
         _ if message != 0 && message == TASKBAR_CREATED.load(Ordering::Relaxed) => {
@@ -211,6 +225,8 @@ pub struct App {
     overlay: Overlay,
     microphone: Microphone,
     games: Vec<String>,
+    updates: Option<Updates>,
+    restarting: bool,
     clock_offset: u64,
     tray: Option<Tray>,
     _hook: Option<Hook>,
@@ -267,7 +283,7 @@ impl App {
     /// The menu as it would open now.
     #[must_use]
     pub fn menu(&self) -> Vec<Entry> {
-        menu::entries(self.flavor.name, &self.status())
+        menu::entries(self.flavor.name, &self.status(), self.updates)
     }
 
     /// Sample activity and advance the scheduler.
@@ -313,6 +329,9 @@ impl App {
         } else if !self.overlay.show() {
             wake = Some(wake.map_or(FOCUS_RETRY, |ms| ms.min(FOCUS_RETRY)));
         }
+        if plan.break_finished && self.updates.is_some_and(Updates::installed) {
+            self.restart_into_update();
+        }
         self.schedule(wake);
     }
 
@@ -350,9 +369,45 @@ impl App {
         }
     }
 
+    fn request_updates(&mut self, manual: bool) {
+        let Some(updates) = &mut self.updates else {
+            return;
+        };
+        match updates.request(manual) {
+            Request::Check => self.check_for_updates(),
+            Request::Restart => self.restart_into_update(),
+            Request::Ignore => {}
+        }
+    }
+
+    fn check_for_updates(&self) {
+        let window = self.window;
+        let version = self.flavor.release.unwrap_or_default();
+        std::thread::spawn(move || {
+            let outcome = std::env::current_exe().map_or(Outcome::Failed, |exe| {
+                update::install_latest(&update::Install::running(&exe, version), &update::Curl)
+            });
+            window.post(WM_UPDATED, outcome as usize);
+        });
+    }
+
+    fn restart_into_update(&mut self) {
+        if self.restarting {
+            return;
+        }
+        match std::env::current_exe().and_then(|exe| update::relaunch(&exe)) {
+            Ok(()) => {
+                self.restarting = true;
+                self.window.post(WM_CLOSE, 0);
+            }
+            Err(error) => eprintln!("Drink restart: {error}"),
+        }
+    }
+
     fn handle(&mut self, event: Event) -> After {
         match event {
             Event::Tick | Event::Audio => self.update(),
+            Event::Daily => self.request_updates(false),
             Event::Change(change) => {
                 self.seen.apply(change);
                 self.update();
@@ -370,6 +425,11 @@ impl App {
             }
             Event::Dismiss => self.restart(),
             Event::Foreground => self.foreground_changed(),
+            Event::Updated(outcome) => {
+                if let Some(updates) = &mut self.updates {
+                    updates.finish(outcome);
+                }
+            }
             Event::Menu { x, y } => {
                 return After::Menu {
                     x,
@@ -379,6 +439,7 @@ impl App {
             }
             Event::Command(Command::TakeBreak) => self.take_break(),
             Event::Command(Command::TogglePause) => self.toggle_pause(),
+            Event::Command(Command::Updates) => self.request_updates(true),
             Event::Command(Command::Quit) | Event::Quit => return After::Quit,
         }
         After::Nothing
@@ -461,6 +522,12 @@ impl Drop for Handle {
         WINDOW.with(|window| window.set(None));
         // SAFETY: destroys the app window created by this thread, if it remains.
         let _ = unsafe { DestroyWindow(self.window.hwnd()) };
+        // Never exit halfway through replacing the executable.
+        drop(
+            update::EXCHANGE
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
     }
 }
 
@@ -493,6 +560,8 @@ pub fn start(flavor: Flavor, options: Options) -> windows::core::Result<Handle> 
         overlay: Overlay::new(hwnd, options.present),
         microphone: Microphone::new(window, WM_AUDIO),
         games: settings::protected_games(&flavor.registry_key()),
+        updates: flavor.release.map(|_| Updates::default()),
+        restarting: false,
         clock_offset: 0,
         tray: options.tray.then(|| Tray::add(hwnd, WM_TRAY, flavor.name)),
         _hook: Hook::install(Some(on_foreground)),
@@ -508,6 +577,11 @@ pub fn start(flavor: Flavor, options: Options) -> windows::core::Result<Handle> 
             app.seen.game = game;
         }
         app.update();
+        if app.updates.is_some() {
+            app.request_updates(false);
+            // SAFETY: a timer on the app window.
+            unsafe { SetCoalescableTimer(Some(hwnd), TIMER_DAILY, DAY_MS, None, DAY_TOLERANCE_MS) };
+        }
     });
     Ok(handle)
 }
@@ -689,6 +763,13 @@ mod tests {
             text: "Quit DrinkTest".into(),
             enabled: true
         }));
+        assert!(!menu.iter().any(|entry| matches!(
+            entry,
+            Entry::Action {
+                command: Command::Updates,
+                ..
+            }
+        )));
         assert!(handle.pump(Duration::from_millis(50)));
     }
 
@@ -820,6 +901,7 @@ mod tests {
                 .unwrap_or(false)
         );
         handle.post_command(Command::TogglePause);
+        handle.post_command(Command::Updates);
         assert!(handle.pump(Duration::from_millis(50)));
         assert_eq!(status(&handle), "Next break in 30 min");
         handle.post_command(Command::Quit);
@@ -839,7 +921,13 @@ mod tests {
         send(main, WM_TRAY, 0, 0x200);
         // SAFETY: the hook callback ignores its arguments.
         unsafe { on_foreground(HWINEVENTHOOK::default(), 0, HWND::default(), 0, 0, 0, 0) };
+        send(main, WM_TIMER, TIMER_DAILY, 0);
         assert!(handle.pump(Duration::from_millis(100)));
+        handle.with(|app| app.updates = Some(Updates::Checking));
+        send(main, WM_UPDATED, Outcome::Current as usize, 0);
+        let label = handle.with(|app| app.updates.map(Updates::label)).flatten();
+        assert_eq!(label, Some("Up to Date · Check Again"));
+        handle.with(|app| app.updates = None);
         send(main, WM_CLOSE, 0, 0);
         assert!(!handle.pump(Duration::from_secs(1)));
     }
@@ -861,6 +949,7 @@ mod tests {
     fn events_survive_deferral_and_messages_decode() {
         let events = [
             Event::Tick,
+            Event::Daily,
             Event::Displays,
             Event::Theme,
             Event::TaskbarCreated,
@@ -868,6 +957,7 @@ mod tests {
             Event::Menu { x: -5, y: 1200 },
             Event::Audio,
             Event::Foreground,
+            Event::Updated(Outcome::Installed),
             Event::Command(Command::Quit),
             Event::Quit,
         ];

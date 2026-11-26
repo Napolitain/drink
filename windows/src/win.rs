@@ -5,6 +5,8 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
@@ -76,6 +78,25 @@ pub fn foreground_window() -> Option<HWND> {
 #[must_use]
 pub fn foreground_is_own() -> bool {
     foreground_window().is_some_and(|hwnd| window_process(hwnd) == std::process::id())
+}
+
+/// The Windows system directory, where curl, tar and `OpenSSH` ship.
+#[must_use]
+pub fn system_directory() -> PathBuf {
+    let mut buffer = [0u16; 260];
+    // SAFETY: writes at most `buffer.len()` characters and returns the length.
+    let len = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+    if len == 0 || len > buffer.len() {
+        return PathBuf::from("C:\\Windows\\System32");
+    }
+    PathBuf::from(OsString::from_wide(&buffer[..len]))
+}
+
+/// Attach to the console of the process that started this one, so a
+/// command-line mode of this windowed executable can print.
+pub fn attach_parent_console() {
+    // SAFETY: fails harmlessly when there is no parent console.
+    let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
 }
 
 /// Full path of a process's executable.

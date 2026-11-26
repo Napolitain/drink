@@ -30,8 +30,35 @@ jobs:
                   echo "tag=$tag" >> "$GITHUB_OUTPUT"
                   echo "Release: ${tag:-skip (no new commit or already released today)}" >> "$GITHUB_STEP_SUMMARY"
 
-    publish:
+    windows:
         needs: plan
+        if: needs.plan.outputs.tag != ''
+        runs-on: windows-latest
+        env:
+            TAG: ${{ needs.plan.outputs.tag }}
+        steps:
+            - uses: actions/checkout@v7.0.1
+              with:
+                  persist-credentials: false
+            - name: Test, build and archive the x64 executable
+              shell: pwsh
+              run: |
+                  $PSNativeCommandUseErrorActionPreference = $true
+                  cargo test --locked -p drink-core -p drink-windows
+                  $env:DRINK_RELEASE_VERSION = $env:TAG.Substring(1)
+                  windows/build.ps1
+                  # Archive with the same bsdtar that the updater extracts with.
+                  $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+                  & $tar -a -cf Drink-Windows-x64.zip -C target/windows/x64 Drink.exe
+                  if ((& $tar -tf Drink-Windows-x64.zip) -ne 'Drink.exe') { throw 'Unexpected archive contents' }
+            - uses: actions/upload-artifact@v7.0.1
+              with:
+                  name: windows-release
+                  path: Drink-Windows-x64.zip
+                  if-no-files-found: error
+
+    publish:
+        needs: [plan, windows]
         if: needs.plan.outputs.tag != ''
         runs-on: macos-latest
         permissions:
@@ -52,7 +79,10 @@ jobs:
                   archs=$(lipo -archs target/Drink.app/Contents/MacOS/Drink)
                   for arch in x86_64 arm64; do grep -qw "$arch" <<< "$archs"; done
                   ditto -c -k --keepParent target/Drink.app Drink-macOS.zip
-            - name: Sign and verify the archive
+            - uses: actions/download-artifact@v8.0.2
+              with:
+                  name: windows-release
+            - name: Sign and verify the archives
               env:
                   SIGNING_KEY: ${{ secrets.DRINK_RELEASE_SIGNING_KEY }}
               run: |
@@ -61,13 +91,18 @@ jobs:
                   trap 'rm -f "$key"' EXIT
                   printf '%s\n' "$SIGNING_KEY" > "$key"
                   unset SIGNING_KEY
+                  # Windows namespaces name the architecture and version, so a
+                  # signature cannot be replayed for another release.
+                  windows=drink-windows-x64-${TAG#v}
                   ssh-keygen -Y sign -f "$key" -n drink-macos Drink-macOS.zip
+                  ssh-keygen -Y sign -f "$key" -n "$windows" Drink-Windows-x64.zip
                   ssh-keygen -Y verify -f macos/release-signers -I drink -n drink-macos -s Drink-macOS.zip.sig < Drink-macOS.zip
-            - name: Publish both assets together
+                  ssh-keygen -Y verify -f macos/release-signers -I drink -n "$windows" -s Drink-Windows-x64.zip.sig < Drink-Windows-x64.zip
+            - name: Publish all assets together
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
-                  assets=(Drink-macOS.zip Drink-macOS.zip.sig)
+                  assets=(Drink-macOS.zip Drink-macOS.zip.sig Drink-Windows-x64.zip Drink-Windows-x64.zip.sig)
                   if gh release view "$TAG" --json isDraft,targetCommitish --jq '[.isDraft,.targetCommitish] | @tsv' > "$RUNNER_TEMP/existing"; then
                       read -r draft target < "$RUNNER_TEMP/existing"
                       [[ "$draft" == true && "$target" == "$GITHUB_SHA" ]] || exit 1

@@ -6,7 +6,9 @@ Build Drink for Windows.
 .DESCRIPTION
 Without options, builds target\Drink Dev.exe. -Dev also opens it. -SmokeTest
 builds and runs the interactive smoke test, which exits with 77 when the
-session cannot show a break.
+session cannot show a break. Setting DRINK_RELEASE_VERSION to YYYY.MM.DD builds the x64 release
+executable target\windows\x64\Drink.exe, which Windows on Arm runs through
+emulation.
 #>
 [CmdletBinding()]
 param([switch]$Dev, [switch]$SmokeTest)
@@ -24,6 +26,22 @@ function Install-Executable([string]$From, [string]$To) {
     } catch {
         throw "Cannot replace $To. Quit it first, then build again."
     }
+}
+
+$release = $env:DRINK_RELEASE_VERSION
+if ($release) {
+    if ($Dev -or $SmokeTest) { throw 'Release builds take no launch options' }
+    if ($release -notmatch '^\d{4}\.\d{2}\.\d{2}$') { throw 'Invalid release version' }
+    # Asset names and signature namespaces carry the architecture, so a
+    # native arm64 build can join later without changing the format.
+    $triple = 'x86_64-pc-windows-msvc'
+    cargo build --locked --release --target $triple -p drink-windows --bin drink
+    $out = Join-Path $target 'windows\x64'
+    New-Item -ItemType Directory -Force -Path $out | Out-Null
+    $exe = Join-Path $out 'Drink.exe'
+    Install-Executable (Join-Path $target "$triple\release\drink.exe") $exe
+    $exe
+    return
 }
 
 if ($SmokeTest) {

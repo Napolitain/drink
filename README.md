@@ -26,13 +26,17 @@ defaults write io.github.napolitain.drink ProtectedGameBundleIDs -array-add com.
 
 ## Run on Windows
 
-Drink runs on Windows 11. To build and open it, run the following command from the checkout with Rust, the Visual Studio C++ build tools and PowerShell 7.3 or newer installed:
+Drink runs on Windows 11. Download `Drink-Windows-x64.zip` from the [latest GitHub release](https://github.com/Napolitain/drink/releases/latest), extract `Drink.exe` and move it to a folder you can write to, such as `%LOCALAPPDATA%\Programs\Drink`. Windows on Arm runs the x64 build through emulation. Releases after `v2026.11.25` include the Windows archive. `Drink.exe` has no Authenticode signature, so SmartScreen asks for confirmation on first launch (**More info → Run anyway**). Smart App Control blocks unsigned apps while it is on.
+
+Release builds check for updates at launch and daily. They use the `curl.exe`, `tar.exe` and OpenSSH `ssh-keygen.exe` that ship with Windows. Drink checks the archive's Ed25519 signature before extraction. The signature namespace names the architecture and version, so a genuine archive cannot be replayed as another release. The running `Drink.exe` is renamed aside and the new one takes its place. The new version launches after the next completed break, and **Restart to Finish Update** applies it sooner. If a check fails, the menu offers a retry.
+
+To run a development build, run the following command from the checkout with Rust, the Visual Studio C++ build tools and PowerShell 7.3 or newer installed:
 
 ```powershell
 windows\build.ps1 -Dev
 ```
 
-**Drink Dev** opens from `target\Drink Dev.exe` and uses its own preferences. Opening it again while it runs leaves the running copy in place. To build without opening it, run `windows\build.ps1`.
+**Drink Dev** opens from `target\Drink Dev.exe`, uses its own preferences and has no release updates. Opening it again while it runs leaves the running copy in place. To build without opening it, run `windows\build.ps1`.
 
 Click the water drop in the notification area for the same menu as on macOS. Windows 11 may first place it in the overflow area; to keep it visible, turn it on under Settings → Personalization → Taskbar → Other system tray icons. Hold Escape for two seconds to end a visible break early. Switching to another app, or Alt+F4, also ends it. To launch at login, add a shortcut to `Drink.exe` in the folder that `shell:startup` opens.
 
@@ -116,7 +120,7 @@ On an Apple Silicon Mac running macOS 27.2.1, the release app launched in the me
 
 ### First Windows run
 
-On an x64 PC with one display running Windows 11 Pro 10.0.26300, the native smoke test verified an opaque, display-sized break window created offscreen, a short Escape tap, a two-second Escape hold and an idle Core Audio reading. In the unlocked session, the accelerated timer covered the display, acquired keyboard focus, closed the break automatically and returned focus to the previous foreground app. Take break now, Pause and Resume passed in the same session. Opening a running build again exited at once and left the running copy in place. A real call or headset change, a game in each window mode, multiple monitors with mixed DPI, typing into an editor as a break appears, and locking or sleeping across a deadline still need interactive verification.
+On an x64 PC with one display running Windows 11 Pro 10.0.26300, the native smoke test verified an opaque, display-sized break window created offscreen, a short Escape tap, a two-second Escape hold and an idle Core Audio reading. In the unlocked session, the accelerated timer covered the display, acquired keyboard focus, closed the break automatically and returned focus to the previous foreground app. Take break now, Pause and Resume passed in the same session. Opening a running build again exited at once and left the running copy in place. Against the GitHub release page, a `v2026.11.25` build reported that it was up to date. An older build found that tag, failed on the missing Windows archive and left its executable unchanged. Signed installs, tampered archives, replayed versions and architectures, and an exchange over a running executable are covered by tests that use a disposable key. A real call or headset change, a game in each window mode, multiple monitors with mixed DPI, typing into an editor as a break appears, and locking or sleeping across a deadline still need interactive verification.
 
 ## Development baseline
 

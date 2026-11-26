@@ -229,7 +229,7 @@ pub fn show_menu(hwnd: HWND, entries: &[Entry], x: i32, y: i32) -> u32 {
 mod tests {
     use super::*;
     use crate::controller::Status;
-    use crate::menu::entries;
+    use crate::menu::{Updates, entries};
     use windows::Win32::UI::WindowsAndMessaging::{
         GetIconInfo, GetMenuItemCount, GetMenuStringW, MF_BYPOSITION,
     };
@@ -265,7 +265,7 @@ mod tests {
             microphone_unavailable: true,
             paused: false,
         };
-        let list = entries("Drink", &status);
+        let list = entries("Drink", &status, Some(Updates::Checking));
         let menu = build_menu(&list).unwrap_or_else(|| unreachable!());
         let text = |index: i32| {
             let mut buffer = [0u16; 64];
@@ -281,11 +281,11 @@ mod tests {
             String::from_utf16_lossy(&buffer[..usize::try_from(len).unwrap_or(0)])
         };
         // SAFETY: counts items of a live menu.
-        assert_eq!(unsafe { GetMenuItemCount(Some(*menu)) }, 7);
+        assert_eq!(unsafe { GetMenuItemCount(Some(*menu)) }, 8);
         assert_eq!(text(0), "Next break in 30 min");
         assert_eq!(text(1), "Microphone status unavailable");
         assert_eq!(text(3), "Take break now");
-        assert_eq!(text(4), "Pause for 1 hour");
-        assert_eq!(text(6), "Quit Drink");
+        assert_eq!(text(6), "Checking for Updates…");
+        assert_eq!(text(7), "Quit Drink");
     }
 }
