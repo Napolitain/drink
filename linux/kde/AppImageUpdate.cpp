@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <csignal>
 #include <sys/stat.h>
+#include <utility>
 
 namespace kde {
 namespace {
@@ -83,11 +84,13 @@ AppImageUpdate::AppImageUpdate(QObject *parent)
 AppImageUpdate::~AppImageUpdate() {
     // Stop the shell and its curl/verification subprocess together. The shell's
     // EXIT trap removes the private stage when a check is interrupted.
-    if (worker.processId() > 0) {
+    const auto pid = worker.processId();
+    if (pid > 0 && std::in_range<pid_t>(pid)) {
         worker.disconnect(this);
-        ::kill(-worker.processId(), SIGTERM);
-        if (!worker.waitForFinished(1000) && worker.processId() > 0) {
-            ::kill(-worker.processId(), SIGKILL);
+        const auto group = -static_cast<pid_t>(pid);
+        ::kill(group, SIGTERM);
+        if (!worker.waitForFinished(1000) && worker.processId() == pid) {
+            ::kill(group, SIGKILL);
             worker.waitForFinished();
         }
     }

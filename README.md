@@ -184,7 +184,16 @@ On an x64 PC with one display running Windows 11 Pro 10.0.26300, the native smok
 
 ## Development baseline
 
-The Rust core follows [template-rust at f60084d](https://github.com/Napolitain/template-rust/tree/f60084dd74f9c80f6985059ab37a1f7f6a3ad5ad), including its toolchain, lint and release profiles, proptest, coverage and mutation testing. The native C++ adapters use the formatting rules from `template-cpp`. CXX generates the bridge in its own crate, keeping native dependencies out of the core. The default Cargo packages are the core and the Windows adapter, whose Win32 modules compile only on Windows. CI is configured to test the core on Linux, macOS and Windows, lint and test the Windows adapter on Windows, and build all three native apps. Linux CI runs `linux/tests/plasma-session` against private KWin, D-Bus and PipeWire instances with two virtual outputs. Windows builds link the C runtime statically, so `Drink.exe` needs no Visual C++ Redistributable.
+The Linux and macOS adapters use clang-format 21 in the pre-commit hook. The KDE CMake build treats pedantic, conversion, signedness and shadowing warnings as errors and emits `compile_commands.json`. Linux CI enforces the template's cognitive complexity limit of 15 on project functions and tests, and its 80% line coverage requirement on native production code, including the AppImage entry point and updater. The adapter uses C++20 and the release targets portable x86-64. [C++ template baseline at 5f9efb5](https://github.com/Napolitain/template-cpp/tree/5f9efb55ac72b12e7e0693462484bad39eb228bf)
+
+To run the KDE quality checks locally, install the Plasma build and test dependencies plus Clang, clang-tidy, compiler-rt and LLVM 21, and jq. The coverage driver builds a separate Debug configuration, runs the tests in private KWin and writes its report under `target/linux-coverage`.
+
+```sh
+linux/tests/coverage
+linux/tests/complexity target/linux-coverage
+```
+
+The Rust core follows [template-rust at f60084d](https://github.com/Napolitain/template-rust/tree/f60084dd74f9c80f6985059ab37a1f7f6a3ad5ad), including its toolchain, lint and release profiles, proptest, coverage and mutation testing. CXX generates the bridge in its own crate, keeping native dependencies out of the core. The default Cargo packages are the core and the Windows adapter, whose Win32 modules compile only on Windows. CI is configured to test the core on Linux, macOS and Windows, lint and test the Windows adapter on Windows, and build all three native apps. Linux CI runs `linux/tests/plasma-session` against private KWin, D-Bus and PipeWire instances with two virtual outputs. Windows builds link the C runtime statically, so `Drink.exe` needs no Visual C++ Redistributable.
 
 ```sh
 prek install

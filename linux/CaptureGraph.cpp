@@ -32,17 +32,23 @@ void CaptureGraph::remove(Id id) {
     });
 }
 
+static std::vector<CaptureGraph::Id>
+recordingStreams(const std::map<CaptureGraph::Id, std::string> &nodes) {
+    std::vector<CaptureGraph::Id> streams;
+    for (const auto &[id, mediaClass] : nodes) {
+        if (mediaClass == "Stream/Input/Audio")
+            streams.push_back(id);
+    }
+    return streams;
+}
+
 bool CaptureGraph::capturing() const {
     std::multimap<Id, Id> upstream;
     for (const auto &[id, link] : activeLinks) {
         if (!monitorPorts.contains(link.outputPort))
             upstream.emplace(link.destination, link.source);
     }
-    std::vector<Id> work;
-    for (const auto &[id, mediaClass] : nodes) {
-        if (mediaClass == "Stream/Input/Audio")
-            work.push_back(id);
-    }
+    auto work = recordingStreams(nodes);
     std::set<Id> seen;
     while (!work.empty()) {
         const auto id = work.back();

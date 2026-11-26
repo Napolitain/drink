@@ -109,8 +109,10 @@ void Drink::connectAudio() {
 
 std::uint64_t Drink::monotonicMilliseconds() {
     using namespace std::chrono;
-    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch())
-        .count();
+    static const auto origin = steady_clock::now();
+    const auto elapsed =
+        duration_cast<milliseconds>(steady_clock::now() - origin);
+    return static_cast<std::uint64_t>(elapsed.count());
 }
 
 bool Drink::present() const {

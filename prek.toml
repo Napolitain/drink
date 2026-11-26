@@ -22,6 +22,15 @@ repo = "local"
 # pre-commit: fixers first (by priority), then checks
 
 [[repos.hooks]]
+id = "clang-format"
+name = "clang-format (native adapters)"
+language = "system"
+entry = "clang-format -i"
+files = '^(linux|macos)/.*\.(cpp|h|mm)$'
+stages = ["pre-commit"]
+priority = 10
+
+[[repos.hooks]]
 id = "cargo-fmt"
 name = "cargo fmt"
 language = "system"

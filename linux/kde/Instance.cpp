@@ -30,6 +30,17 @@ void request(const QDBusConnection &bus, const QString &peer,
         QDBusMessage::createMethodCall(peer, objectPath, interface, method),
         QDBus::Block, 8000);
 }
+
+bool quitDevelopment(const QDBusConnection &bus) {
+    const auto peer = owner(bus, devRole);
+    if (peer.isEmpty())
+        return true;
+    request(bus, peer, "quit");
+    if (owner(bus, devRole) != peer)
+        return true;
+    qCritical("Drink Dev did not release the desktop session.");
+    return false;
+}
 } // namespace
 
 Instance::Instance(bool development)
@@ -63,24 +74,13 @@ Instance::Start Instance::start() {
 }
 
 Instance::Start Instance::startLocked() {
-    ownsRole = bus.registerService(dev ? devRole : releaseRole);
-    if (dev && !ownsRole)
-        return owner(bus, devRole).isEmpty() ? Start::Failed : Start::Duplicate;
-
-    if (!dev) {
-        const auto peer = owner(bus, devRole);
-        if (!peer.isEmpty()) {
-            request(bus, peer, "quit");
-            if (owner(bus, devRole) == peer) {
-                qCritical("Drink Dev did not release the desktop session.");
-                return Start::Failed;
-            }
-        }
-        // An existing release will resume when its Dev watcher fires.
-        if (!ownsRole)
-            return owner(bus, releaseRole).isEmpty() ? Start::Failed
-                                                     : Start::Duplicate;
-    }
+    const auto role = dev ? devRole : releaseRole;
+    ownsRole = bus.registerService(role);
+    // Opening any release ends Dev. A parked release then resumes itself.
+    if (!dev && !quitDevelopment(bus))
+        return Start::Failed;
+    if (!ownsRole)
+        return owner(bus, role).isEmpty() ? Start::Failed : Start::Duplicate;
 
     const auto previous = owner(bus, busName);
     if (!previous.isEmpty()) {

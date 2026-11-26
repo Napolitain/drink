@@ -128,6 +128,8 @@ prek run -a --hook-stage pre-push
 cargo build --release
 linux/build  # on Linux with the Plasma Wayland development dependencies in README.md
 linux/tests/plasma-session  # isolated KWin, PipeWire and release/Dev handoff tests
+linux/tests/coverage  # Clang Debug build, private Plasma tests, 80% native line coverage
+linux/tests/complexity target/linux-coverage  # native source and tests, maximum 15
 nix flake check --no-update-lock-file  # native x86-64 KDE package
 linux/appimage/build YYYY.MM.DD  # Ubuntu x86-64 release build using a real date
 linux/tests/plasma-session target/linux-appimage linux/appimage/test target/Drink-Linux-KDE-x86_64.AppImage

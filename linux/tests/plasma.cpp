@@ -1,5 +1,6 @@
 // Run through tests/plasma-session so the lock service, audio routing and
 // foreground changes all belong to this disposable compositor.
+#include "plasma.h"
 #include "Drink.h"
 #include <QApplication>
 #include <QDBusConnection>
@@ -12,24 +13,6 @@
 #include <QWidget>
 #include <algorithm>
 #include <stdexcept>
-
-class ScreenSaver : public QObject {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.ScreenSaver")
-public:
-    bool locked = true;
-public slots:
-    bool GetActive() const { return locked; }
-signals:
-    void ActiveChanged(bool active);
-};
-
-class LoginManager : public QObject {
-    Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.login1.Manager")
-signals:
-    void PrepareForSleep(bool active);
-};
 
 static void require(bool okay, const char *reason) {
     if (!okay)
@@ -67,21 +50,21 @@ static void startClient(QProcess &client, const QString &id) {
             "unexpected client focus state");
 }
 
+static int runClient(QApplication &app, const QString &desktopId) {
+    app.setDesktopFileName(desktopId);
+    QWidget window;
+    QObject::connect(&app, &QGuiApplication::focusWindowChanged,
+                     [](QWindow *focused) {
+                         if (focused) {
+                             puts("focused");
+                             fflush(stdout);
+                         }
+                     });
+    window.show();
+    return app.exec();
+}
+
 static int exercise(QApplication &app) {
-    app.setQuitOnLastWindowClosed(false);
-    if (app.arguments().size() == 3 && app.arguments()[1] == "--client") {
-        app.setDesktopFileName(app.arguments()[2]);
-        QWidget window;
-        QObject::connect(&app, &QGuiApplication::focusWindowChanged,
-                         [](QWindow *window) {
-                             if (window) {
-                                 puts("focused");
-                                 fflush(stdout);
-                             }
-                         });
-        window.show();
-        return app.exec();
-    }
     require(qEnvironmentVariableIsSet("DRINK_TEST_SESSION"),
             "start with tests/plasma-session");
     require(app.platformName() == "wayland" && app.screens().size() == 2,
@@ -120,7 +103,9 @@ static int exercise(QApplication &app) {
     QElapsedTimer elapsed;
     elapsed.start();
     std::uint64_t offset = 0;
-    kde::Drink drink(nullptr, [&] { return elapsed.elapsed() + offset; });
+    kde::Drink drink(nullptr, [&] {
+        return static_cast<std::uint64_t>(elapsed.elapsed()) + offset;
+    });
     int finished = 0;
     QObject::connect(&drink, &kde::Drink::breakFinished, [&] { ++finished; });
     QProcess second;
@@ -267,11 +252,13 @@ static int exercise(QApplication &app) {
 
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
     try {
+        if (app.arguments().size() == 3 && app.arguments()[1] == "--client")
+            return runClient(app, app.arguments()[2]);
         return exercise(app);
     } catch (const std::exception &error) {
         fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
     }
 }
-#include "plasma.moc"

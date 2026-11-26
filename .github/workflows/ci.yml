@@ -32,6 +32,14 @@ jobs:
               with:
                   tool: cargo-llvm-cov
 
+            - name: Select the template's clang-format 21
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y clang-format-21
+                  mkdir -p "$RUNNER_TEMP/format-bin"
+                  ln -s /usr/bin/clang-format-21 "$RUNNER_TEMP/format-bin/clang-format"
+                  echo "$RUNNER_TEMP/format-bin" >> "$GITHUB_PATH"
+
             - name: Hooks (pre-commit)
               uses: j178/prek-action@v3.0.0
 

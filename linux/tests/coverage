@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -P "$(dirname "$0")/../.."
+
+# Ubuntu provides version-suffixed tools. Nix exposes the selected toolchain
+# under the unversioned names. Keep the profile reader and writer compatible.
+clang=$(command -v clang++-21 || command -v clang++)
+version=$("$clang" -dumpversion)
+major=${version%%.*}
+llvm_tool() {
+    local tool
+    tool=$(command -v "$1-$major" || command -v "$1")
+    if ! "$tool" --version | grep -Eq "LLVM version ${major}([.]|$)"; then
+        echo "$1 must match Clang $major for native coverage." >&2
+        return 1
+    fi
+    echo "$tool"
+}
+profdata=$(llvm_tool llvm-profdata)
+cov=$(llvm_tool llvm-cov)
+
+build="$PWD/target/linux-coverage"
+cmake -S linux -B "$build" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER="$clang" \
+    -DCMAKE_CXX_FLAGS='-fprofile-instr-generate -fcoverage-mapping' \
+    -DCMAKE_EXE_LINKER_FLAGS=-fprofile-instr-generate \
+    -DBUILD_TESTING=ON -DDRINK_APPIMAGE=ON -DDRINK_RELEASE_VERSION=2000.01.01
+cmake --build "$build" --parallel
+
+# Each helper, test and GUI process writes its own counters. A fresh directory
+# prevents a previous run from covering code that this run never executed.
+raw=$(mktemp -d "$build/profiles.XXXXXXXX")
+trap 'rm -rf "$raw"' EXIT
+export LLVM_PROFILE_FILE="$raw/%p-%m.profraw"
+ctest --test-dir "$build" --output-on-failure -LE plasma
+linux/tests/plasma-session "$build"
+"$profdata" merge -sparse "$raw" -o "$build/coverage.profdata"
+
+objects=("$build/drink-kde" -object "$build/test-programs/drink-kde-dev"
+    -object "$build/capture-test" -object "$build/plasma-test" -object "$build/appimage-update-test")
+mapfile -d '' -t sources < <(
+    find "$PWD/linux" -path "$PWD/linux/tests" -prune -o -type f \
+        \( -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' -o -name '*.h' -o -name '*.hpp' -o -name '*.hh' -o -name '*.hxx' \) -print0 | sort -z
+)
+args=("${objects[@]}" -instr-profile="$build/coverage.profdata" "${sources[@]}")
+"$cov" report "${args[@]}"
+"$cov" export -summary-only "${args[@]}" > "$build/coverage.json"
+# Headers with declarations alone have no mapping. Every implementation file
+# must appear, including main.cpp and files with zero executed lines.
+for source in "${sources[@]}"; do
+    case "$source" in
+        *.cpp|*.cc|*.cxx)
+            if ! jq -e --arg path "$source" 'any(.data[0].files[]; .filename == $path)' \
+                "$build/coverage.json" >/dev/null; then
+                echo "Missing native coverage mapping for $source" >&2
+                exit 1
+            fi ;;
+    esac
+done
+if ! jq -e '.data[0].totals.lines.percent >= 80' "$build/coverage.json" >/dev/null; then
+    echo 'Native C++ line coverage is below 80%.' >&2
+    exit 1
+fi

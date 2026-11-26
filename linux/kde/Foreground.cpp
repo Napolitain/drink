@@ -9,6 +9,7 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
+#include <algorithm>
 
 namespace kde {
 static const QString kwin = QStringLiteral("org.kde.KWin");
@@ -20,6 +21,13 @@ static QDBusMessage scriptCall(const QString &method,
         QDBusMessage::createMethodCall(kwin, "/Scripting", scripting, method);
     call.setArguments(args);
     return QDBusConnection::sessionBus().call(call, QDBus::Block, 1500);
+}
+
+static bool hasGameCategory(const QString &id) {
+    if (id.isEmpty())
+        return false;
+    const auto service = KService::serviceByDesktopName(id);
+    return service && service->categories().contains("Game");
 }
 
 bool isGame(const QString &desktopFile, const QString &resourceClass,
@@ -40,14 +48,7 @@ bool isGame(const QString &desktopFile, const QString &resourceClass,
             id.compare("com.valvesoftware.Steam", Qt::CaseInsensitive) == 0)
             return false;
     }
-    for (const auto &id : ids) {
-        if (id.isEmpty())
-            continue;
-        auto service = KService::serviceByDesktopName(id);
-        if (service && service->categories().contains("Game"))
-            return true;
-    }
-    return false;
+    return std::ranges::any_of(ids, hasGameCategory);
 }
 
 Foreground::Foreground()
