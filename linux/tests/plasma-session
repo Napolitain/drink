@@ -9,6 +9,17 @@ mkdir -m 700 "$XDG_RUNTIME_DIR"
 mkdir -p "$XDG_CONFIG_HOME/pipewire/pipewire.conf.d"
 cp linux/tests/pipewire.conf "$XDG_CONFIG_HOME/pipewire/pipewire.conf.d/drink.conf"
 mkdir -p "$XDG_DATA_HOME/applications"
+# KService 6.24 indexes desktop entries via an XDG menu. A standalone
+# compositor on a CI runner has no Plasma application menu installed.
+export XDG_MENU_PREFIX=drink-test-
+mkdir -p "$XDG_CONFIG_HOME/menus"
+cat >"$XDG_CONFIG_HOME/menus/${XDG_MENU_PREFIX}applications.menu" <<'MENU'
+<Menu>
+    <Name>Applications</Name>
+    <DefaultAppDirs/>
+    <Include><All/></Include>
+</Menu>
+MENU
 cat >"$XDG_DATA_HOME/applications/org.example.DrinkGame.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
