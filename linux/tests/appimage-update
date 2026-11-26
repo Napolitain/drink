@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# Signed ELF fixtures have the architecture and type-2 marker of the release
+# image. This exercises update/replacement without a desktop, FUSE or network.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+helper=$PWD/linux/kde/update-appimage
+tmp=$(mktemp -d)
+running=
+cleanup() {
+    if [[ -n $running ]]; then kill "$running" 2>/dev/null || :; wait "$running" 2>/dev/null || :; fi
+    rm -rf "$tmp"
+}
+trap cleanup EXIT
+mkdir -p "$tmp/bin" "$tmp/downloads" "$tmp/Applications"
+release=Drink-Linux-KDE-x86_64.AppImage
+image="$tmp/Applications/My Drink.AppImage"
+old=2025.01.01
+new=2025.01.08
+export DRINK_TEST_RELEASES=https://github.com/Napolitain/drink/releases
+export DRINK_TEST_LOCATION="$DRINK_TEST_RELEASES/tag/v$new"
+export DRINK_TEST_DOWNLOADS="$tmp/downloads"
+asset="$DRINK_TEST_DOWNLOADS/$release"
+fail() { echo "$*" >&2; exit 1; }
+
+cat > "$tmp/version.c" <<'C'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+    if (argc != 2) return 1;
+    if (strstr(argv[0], "/.drink-update.")) {
+        const char *dir = getenv("TMPDIR");
+        if (!getenv("APPIMAGE_EXTRACT_AND_RUN") || !dir ||
+            strncmp(argv[0], dir, strlen(dir)) || argv[0][strlen(dir)] != '/')
+            return 1;
+    }
+    puts("Drink " VERSION);
+    fflush(stdout);
+    if (strcmp(argv[1], "--hold") == 0) pause();
+    return strcmp(argv[1], "--version") != 0;
+}
+C
+for version in "$old" "$new"; do
+    cc "-DVERSION=\"$version\"" "$tmp/version.c" -o "$tmp/$version"
+    printf 'AI\002' | dd of="$tmp/$version" bs=1 seek=8 conv=notrunc status=none
+done
+cp "$tmp/$old" "$image"
+chmod 0750 "$image"
+
+# Require the production transport flags and exact repository asset URLs.
+printf '#!%s\n' "$(command -v bash)" > "$tmp/bin/curl"
+cat >> "$tmp/bin/curl" <<'CURL'
+set -euo pipefail
+[[ $1 == -q ]] && shift
+if [[ -n ${DRINK_TEST_HOST_PLUGINS:-} ]]; then
+    [[ $QT_PLUGIN_PATH == "$DRINK_TEST_HOST_PLUGINS" && ! -v QT_QPA_PLATFORM_PLUGIN_PATH ]]
+    [[ ! -v DRINK_ORIGINAL_QT_PLUGIN_PATH && ! -v APPDIR && ! -v APPIMAGE && ! -v ARGV0 && ! -v OWD ]]
+fi
+https=false redirects=false head=false follow=false output= maximum=
+while (( $# > 1 )); do
+    case "$1" in
+        --proto) [[ $2 == '=https' ]]; https=true; shift;;
+        --proto-redir) [[ $2 == '=https' ]]; redirects=true; shift;;
+        --head) head=true;;
+        --location) follow=true;;
+        --max-filesize) maximum=$2; shift;;
+        --output) output=$2; shift;;
+        --write-out) [[ $2 == '%{redirect_url}' ]]; shift;;
+        --connect-timeout|--max-time|--retry|--retry-max-time) shift;;
+        --fail|--silent|--show-error) ;;
+        *) echo "Unexpected curl option: $1" >&2; exit 1;;
+    esac
+    shift
+done
+[[ $https == true && $redirects == true ]]
+case "$1" in
+    "$DRINK_TEST_RELEASES/latest")
+        [[ $head == true && $follow == false && $output == /dev/null ]]
+        if [[ -n ${DRINK_TEST_FAIL_ONCE:-} && -f $DRINK_TEST_FAIL_ONCE ]]; then
+            rm -- "$DRINK_TEST_FAIL_ONCE"; exit 10
+        fi
+        printf %s "$DRINK_TEST_LOCATION";;
+    "$DRINK_TEST_RELEASES/download/${DRINK_TEST_LOCATION##*/}/Drink-Linux-KDE-x86_64.AppImage" | \
+    "$DRINK_TEST_RELEASES/download/${DRINK_TEST_LOCATION##*/}/Drink-Linux-KDE-x86_64.AppImage.sig")
+        [[ $head == false && $follow == true && -n $output ]]
+        if [[ $1 == *.sig ]]; then [[ $maximum == 65536 ]]; else [[ $maximum == 268435456 ]]; fi
+        cp -- "$DRINK_TEST_DOWNLOADS/${1##*/}" "$output"
+        if [[ -n ${DRINK_TEST_BLOCKING:-} ]]; then
+            touch "$DRINK_TEST_BLOCKING"
+            exec sleep 60
+        fi
+        if [[ -n ${DRINK_TEST_REPLACE:-} && -e "$DRINK_TEST_REPLACE.new" ]]; then
+            mv -- "$DRINK_TEST_REPLACE.new" "$DRINK_TEST_REPLACE"
+        fi;;
+    *) echo "Unexpected curl URL: $1" >&2; exit 1;;
+esac
+CURL
+chmod +x "$tmp/bin/curl"
+export PATH="$tmp/bin:$PATH"
+ssh-keygen -q -t ed25519 -N '' -f "$tmp/key"
+signers="drink $(cat "$tmp/key.pub")"
+sign() {
+    rm -f "$asset.sig"
+    ssh-keygen -Y sign -f "$tmp/key" -n "drink-linux-kde-$1-$2" "$asset" 2>/dev/null
+}
+initial=$(stat -Lc '%d:%i' -- "$image")
+update() { bash "$helper" "$image" "$old" "$initial" "$signers"; }
+rejected() {
+    if update > "$tmp/result" 2> "$tmp/error"; then fail "Accepted $1"; fi
+    cmp "$tmp/$old" "$image" || fail "Overwrote original after $1"
+    [[ $(stat -Lc '%d:%i' -- "$image") == "$initial" ]] || fail "Replaced inode after $1"
+    [[ -z $(find "$tmp/Applications" -name '.drink-update.*' -print -quit) ]] || fail "Private stage left after $1"
+}
+
+result=$(DRINK_TEST_LOCATION="$DRINK_TEST_RELEASES/tag/v$old" update)
+[[ $result == current ]]
+result=$(DRINK_TEST_LOCATION="$DRINK_TEST_RELEASES/tag/v2024.12.31" update)
+[[ $result == current ]]
+DRINK_TEST_LOCATION='https://example.invalid/releases/tag/v2099.01.01' rejected 'foreign latest-release redirect'
+DRINK_TEST_LOCATION="$DRINK_TEST_RELEASES/tag/v2025.02.30" rejected 'invalid date'
+rejected 'missing download'
+cp "$tmp/$new" "$asset"
+sign x86_64 "$old"
+rejected 'replayed release version'
+sign aarch64 "$new"
+rejected 'replayed architecture'
+sign x86_64 "$new"
+printf 'tampered' >> "$asset"
+rejected 'tampered signed image'
+cp "$tmp/$old" "$asset"
+sign x86_64 "$new"
+rejected 'signed image reporting the wrong version'
+cp "$tmp/$new" "$asset"
+printf '\267\000' | dd of="$asset" bs=1 seek=18 conv=notrunc status=none
+sign x86_64 "$new"
+rejected 'signed image containing a foreign architecture'
+printf 'wrong image type' > "$asset"
+sign x86_64 "$new"
+rejected 'signed non-AppImage'
+cp "$tmp/$new" "$asset"
+sign x86_64 "$new"
+chmod 0550 "$image"
+rejected 'read-only original'
+chmod 0750 "$image"
+exec {locked}<"$image"
+flock -n "$locked"
+rejected 'concurrent update'
+flock -u "$locked"
+exec {locked}<&-
+
+cp "$tmp/$old" "$image.new"
+DRINK_TEST_REPLACE="$image" update > "$tmp/result" 2> "$tmp/error" && fail 'Overwrote an independently exchanged file'
+cmp "$tmp/$old" "$image"
+initial=$(stat -Lc '%d:%i' -- "$image")
+chmod 0750 "$image"
+"$image" --hold > "$tmp/running" &
+running=$!
+for _ in {1..100}; do [[ -s $tmp/running ]] && break; sleep 0.01; done
+[[ $(cat "$tmp/running") == "Drink $old" ]]
+result=$(update)
+[[ $result == installed && $("$image" --version) == "Drink $new" ]]
+cmp "$tmp/$old" "/proc/$running/exe"
+[[ $(stat -Lc '%a' -- "$image") == 750 ]]
+echo "Passed authenticated replacement over a running inode, permissions, missing assets, tampering, replay and concurrent replacement."
+
+if (( $# == 2 )); then
+    exe=$(realpath -- "$1")
+    rcc=$(realpath -- "$2")
+    cp "$tmp/$old" "$image.new"
+    chmod 0750 "$image.new"
+    mv "$image.new" "$image"
+    appdir="$tmp/test.AppDir"
+    mkdir -p "$appdir/usr/bin" "$tmp/resources"
+    ln -s "$exe" "$appdir/usr/bin/drink-kde"
+    cp "$helper" "$tmp/resources/update-appimage"
+    printf '%s\n' "$signers" > "$tmp/resources/release-signers"
+    cat > "$tmp/resources/test.qrc" <<'RCC'
+<RCC><qresource prefix="/drink"><file>update-appimage</file><file>release-signers</file></qresource></RCC>
+RCC
+    "$rcc" --binary "$tmp/resources/test.qrc" -o "$tmp/test.rcc"
+    APPDIR="$tmp/unrelated" APPIMAGE="$image" "$exe" "$tmp/test.rcc" disabled
+    export DRINK_TEST_HOST_PLUGINS="$tmp/original plugins"
+    export DRINK_ORIGINAL_QT_PLUGIN_PATH="$DRINK_TEST_HOST_PLUGINS"
+    export QT_PLUGIN_PATH="$appdir/plugins" QT_QPA_PLATFORM_PLUGIN_PATH="$appdir/platforms"
+    export ARGV0="$image" OWD="$tmp"
+    unset DRINK_ORIGINAL_QT_QPA_PLATFORM_PLUGIN_PATH
+    DRINK_TEST_BLOCKING="$tmp/in-flight" APPDIR="$appdir" APPIMAGE="$image" "$exe" "$tmp/test.rcc" cancel
+    cmp "$tmp/$old" "$image"
+    [[ -z $(find "$tmp/Applications" -name '.drink-update.*' -print -quit) ]] || fail 'Private stage left after cancellation'
+    export DRINK_TEST_FAIL_ONCE="$tmp/offline"
+    touch "$DRINK_TEST_FAIL_ONCE"
+    APPDIR="$appdir" APPIMAGE="$image" "$exe" "$tmp/test.rcc" enabled
+    [[ $("$image" --version) == "Drink $new" ]]
+    echo "Passed updater eligibility, startup, cancellation, host environment, retry, ready state and outer restart path."
+fi

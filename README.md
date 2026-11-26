@@ -4,11 +4,24 @@ Drink is a water-break reminder. Native adapters run in the KDE Plasma system tr
 
 ## Run on KDE Plasma
 
+The x86-64 AppImage targets Plasma Wayland on Kubuntu 26.04. It bundles Qt, KDE libraries and the Wayland and SVG plugins. Other distributions need compatible system libraries, including glibc 2.43 or newer, and PipeWire. On NixOS, use the native package below.
+
+Starting with the first release after `v2026.11.26`, download `Drink-Linux-KDE-x86_64.AppImage` and its `.sig` from the [GitHub releases page](https://github.com/Napolitain/drink/releases). Verify the download using the [release instructions](#weekly-releases). Put the image in a writable folder such as `~/Applications`, then run:
+
+```sh
+chmod +x ~/Applications/Drink-Linux-KDE-x86_64.AppImage
+~/Applications/Drink-Linux-KDE-x86_64.AppImage
+```
+
+The AppImage checks at launch and daily. It uses Bash, curl, OpenSSH's `ssh-keygen`, util-linux's `flock` and GNU coreutils. Drink authenticates the newer image against its architecture and date, checks the version it reports and replaces the file atomically. The running reminder switches over after the next completed break. Choose **Restart to Finish Update** to switch sooner, or **Update Unavailable · Retry** to repeat a failed check. If FUSE is unavailable, launch with `APPIMAGE_EXTRACT_AND_RUN=1` in the environment.
+
+### NixOS
+
 On x86-64 NixOS, run the native package with `nix run github:Napolitain/drink#drink-kde`. For a declarative install, add `inputs.drink.url = "github:Napolitain/drink";` to your flake and include `inputs.drink.packages.x86_64-linux.drink-kde` in your NixOS `environment.systemPackages` or Home Manager `home.packages`. Update the `drink` input and rebuild to upgrade. The version shown by `drink-kde --version` uses the source revision's date. The package installs the **Drink** launcher and icon. To launch at login, add **Drink** in System Settings → Autostart.
 
 ### Develop from a checkout
 
-Build from the checkout with the pinned Rust toolchain, a C++20 compiler, CMake, pkg-config, Qt 6, LayerShellQt 6.6 or newer, KDE Frameworks 6 KService and KStatusNotifierItem (6.14+), and the PipeWire development files. On Kubuntu 26.04 the development packages include `qt6-base-dev`, `liblayershellqtinterface-dev`, `libkf6service-dev`, `libkf6statusnotifieritem-dev` and `libpipewire-0.3-dev`. Run the executable inside your Plasma Wayland session.
+Build from the checkout with the pinned Rust toolchain, a C++20 compiler, CMake, pkg-config, Qt 6.7 or newer, LayerShellQt 6.6 or newer, KDE Frameworks 6 KService and KStatusNotifierItem (6.14+), and the PipeWire development files. On Kubuntu 26.04 the development packages include `qt6-base-dev`, `liblayershellqtinterface-dev`, `libkf6service-dev`, `libkf6statusnotifieritem-dev` and `libpipewire-0.3-dev`. Run the executable inside your Plasma Wayland session.
 
 ```sh
 linux/build --dev
@@ -80,7 +93,7 @@ Set-ItemProperty -Path $key -Name ProtectedGameExecutables -Type MultiString -Va
 
 ## Weekly releases
 
-GitHub Actions checks `main` every Monday at 08:17 UTC. If the commit differs from the last published release and descends from it, the release workflow tests the core and the Mac and Windows adapters, builds the universal Mac app and the x64 Windows executable, signs each ZIP and publishes all four assets together. The UTC release date supplies the tag, for example `v2026.11.25`. An unchanged week produces no release. A manual dispatch follows the same rules, including at most one release per UTC date. Installed apps accept only `vYYYY.MM.DD` tags, so a second fix on the same day ships under the next date; a suffix such as `v2026.11.26.1` would make every existing install reject the latest release. [Weekly release workflow](https://github.com/Napolitain/drink/actions/workflows/release.yml)
+GitHub Actions checks `main` every Monday at 08:17 UTC. If the commit differs from the last published release and descends from it, the release workflow builds and tests the universal Mac app, the x64 Windows executable and the x86-64 Plasma AppImage. It signs the two ZIPs and the AppImage and publishes all three with their detached signatures. The UTC release date supplies the tag, for example `v2026.11.25`. An unchanged week produces no release. A manual dispatch follows the same rules, including at most one release per UTC date. Installed apps accept only `vYYYY.MM.DD` tags. A second fix on the same day ships under the next date. [Weekly release workflow](https://github.com/Napolitain/drink/actions/workflows/release.yml)
 
 The release signing key is stored in the repository Actions secret `DRINK_RELEASE_SIGNING_KEY`. The matching public key is in `macos/release-signers`. Keep the signer available across releases. To verify a downloaded archive using a trusted checkout:
 
@@ -93,6 +106,14 @@ The Windows namespace includes the release version. For example, in PowerShell:
 
 ```powershell
 cmd /c 'ssh-keygen -Y verify -f macos\release-signers -I drink -n drink-windows-x64-2026.12.07 -s Drink-Windows-x64.zip.sig < Drink-Windows-x64.zip'
+```
+
+For KDE, use the date from the downloaded release tag and the public key from a trusted checkout:
+
+```sh
+version=2026.12.07  # substitute the release's YYYY.MM.DD
+ssh-keygen -Y verify -f macos/release-signers -I drink -n "drink-linux-kde-x86_64-$version" \
+    -s Drink-Linux-KDE-x86_64.AppImage.sig < Drink-Linux-KDE-x86_64.AppImage
 ```
 
 ## What a break feels like
@@ -150,6 +171,8 @@ Use a fake clock for the shared scheduler and property-test overlapping inhibito
 On x86-64 NixOS with KWin 6.7.5 and Qt 6.11.2, the app registered with the Plasma tray, reported both activity detectors available, handled Pause and Resume through the tray menu and exited through Quit. A second launch exited cleanly. With the overlay hidden, a ten-second sample of the installed process added zero CPU ticks at 100 Hz and ended at 63,600 KiB RSS. In an isolated KWin Wayland session with two virtual outputs, the smoke test advanced the interval, checked both output sizes and keyboard focus, let the full 30-second break expire, and observed the previous client regain focus. It also exercised Escape tap and hold, a client with a Steam game ID, a live PipeWire route from a synthetic source, recovery after restarting PipeWire, and lock and wake signals from test services. Physical headsets, games, display hotplug and system suspend still need hardware verification.
 
 The isolated handoff test launches both KDE executables and checks which process owns the reminder. It verifies that the original release drops its foreground observer while Dev runs and restores it after a normal quit, a killed Dev process or an explicit release launch.
+
+On Ubuntu 26.04 x86-64, two real AppImages exercised the update path using a disposable signing key and local release assets. Selecting **Restart to Finish Update** in the exported tray menu started the newer image. It owned the reminder, loaded its bundled Qt plugins and reported **Up to Date**. The native Nix package also passed the handoff test from a temporary profile.
 
 ### First macOS run
 

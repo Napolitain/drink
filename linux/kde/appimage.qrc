@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/drink">
+        <file alias="release-signers">../../macos/release-signers</file>
+        <file>update-appimage</file>
+    </qresource>
+</RCC>

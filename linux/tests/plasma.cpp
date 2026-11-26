@@ -120,7 +120,9 @@ static int exercise(QApplication &app) {
     QElapsedTimer elapsed;
     elapsed.start();
     std::uint64_t offset = 0;
-    kde::Drink drink([&] { return elapsed.elapsed() + offset; });
+    kde::Drink drink(nullptr, [&] { return elapsed.elapsed() + offset; });
+    int finished = 0;
+    QObject::connect(&drink, &kde::Drink::breakFinished, [&] { ++finished; });
     QProcess second;
     second.start(DRINK_TEST_PROGRAM, {});
     require(second.waitForFinished(3000) &&
@@ -171,6 +173,7 @@ static int exercise(QApplication &app) {
             "overlay closed before its deadline");
     until([&] { return editor.canReadLine(); },
           "previous window regained focus");
+    require(finished == 1, "timed break can finish a staged update");
     take->trigger();
     until(
         [] {
@@ -186,11 +189,13 @@ static int exercise(QApplication &app) {
     require(overlays().size() == 2, "a partial Escape hold kept the break");
     until([] { return overlays().isEmpty(); },
           "Escape hold dismissed the break");
+    require(finished == 2, "deliberate dismissal can finish a staged update");
 
     take->trigger();
     auto *pause = action("Pause for 1 hour");
     pause->trigger();
     require(action("Paused") && action("Resume"), "pause suppresses the break");
+    require(finished == 2, "pausing a break leaves a staged update waiting");
     pause->trigger();
     require(action("Next break in 30 min"), "resume starts a fresh interval");
     QProcess game;
@@ -224,6 +229,7 @@ static int exercise(QApplication &app) {
     until(
         [] { return overlays().isEmpty() && action("Break due · microphone"); },
         "new microphone interrupted visible break");
+    require(finished == 2, "interrupted break leaves a staged update waiting");
     emit login.PrepareForSleep(true);
     until([] { return action("Waiting for your return"); },
           "suspend cleared pending break");

@@ -1,11 +1,12 @@
 #include "Drink.h"
+#include "AppImageUpdate.h"
 #include <QApplication>
 #include <QScreen>
 #include <algorithm>
 #include <chrono>
 
 namespace kde {
-Drink::Drink(std::function<std::uint64_t()> clock)
+Drink::Drink(AppImageUpdate *updates, std::function<std::uint64_t()> clock)
     : now(std::move(clock)), scheduler(drink::new_scheduler(now())) {
     timer.setSingleShot(true);
     timer.setTimerType(Qt::PreciseTimer);
@@ -25,7 +26,7 @@ Drink::Drink(std::function<std::uint64_t()> clock)
     connect(qApp, &QGuiApplication::screenRemoved, this, &Drink::update);
     connect(&windows, &BreakWindows::dismissed, this, &Drink::finishBreak,
             Qt::QueuedConnection);
-    setupMenu();
+    setupMenu(updates);
     connectAudio();
     update();
 }
@@ -37,7 +38,7 @@ void Drink::finishBreak() {
     }
 }
 
-void Drink::setupMenu() {
+void Drink::setupMenu(AppImageUpdate *updates) {
     tray.setStandardActionsEnabled(false);
     tray.setIsMenu(true);
     tray.setTitle(qApp->applicationName());
@@ -62,6 +63,22 @@ void Drink::setupMenu() {
         update();
     });
     menu.addSeparator();
+    if (updates && updates->enabled()) {
+        auto *action = menu.addAction(updates->menuText(), updates, [updates] {
+            if (updates->ready())
+                updates->restartIfReady();
+            else
+                updates->check();
+        });
+        auto refresh = [updates, action] {
+            action->setText(updates->menuText());
+            action->setEnabled(!updates->checking());
+        };
+        connect(updates, &AppImageUpdate::changed, action, refresh);
+        connect(this, &Drink::breakFinished, updates,
+                &AppImageUpdate::restartIfReady);
+        refresh();
+    }
     menu.addAction("Quit " + qApp->applicationName(), qApp,
                    &QCoreApplication::quit);
     connect(&menu, &QMenu::aboutToShow, this, &Drink::refreshMenu);
@@ -106,7 +123,10 @@ bool Drink::blocked() const {
 }
 
 void Drink::update() {
-    scheduler->update(now(), present(), blocked());
+    const bool wasVisible = windows.visible();
+    const bool here = present();
+    const bool busy = blocked();
+    scheduler->update(now(), here, busy);
     windows.sync(scheduler->visible());
     const auto deadline = scheduler->deadline();
     timer.stop();
@@ -116,6 +136,9 @@ void Drink::update() {
             static_cast<int>(deadline > current ? deadline - current : 0));
     }
     refreshMenu();
+    if (wasVisible && !scheduler->visible() && !scheduler->paused() &&
+        !scheduler->pending() && here && !busy)
+        emit breakFinished();
 }
 
 void Drink::refreshMenu() {

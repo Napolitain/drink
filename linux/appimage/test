@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $# != 1 || ${DRINK_TEST_SESSION:-} != 1 || -z ${DBUS_SESSION_BUS_ADDRESS:-} ||
+    ${DBUS_SYSTEM_BUS_ADDRESS:-} != "$DBUS_SESSION_BUS_ADDRESS" ]]; then
+    echo 'Usage: linux/tests/plasma-session target/linux-appimage linux/appimage/test path/to/Drink.AppImage' >&2
+    exit 2
+fi
+# The static runtime starts a child when it extracts. Ask the private bus for
+# the actual GUI process so this exercises the same artifact users download.
+image="$XDG_RUNTIME_DIR/Drink.AppImage"
+cp -- "$1" "$image"
+role=io.github.napolitain.Drink.Release
+log="$XDG_RUNTIME_DIR/appimage.log"
+APPIMAGE_EXTRACT_AND_RUN=1 https_proxy=http://127.0.0.1:9 NO_PROXY='' no_proxy='' \
+    QT_PLUGIN_PATH=/absent-host-qt "$image" >"$log" 2>&1 &
+launcher=$!
+pid=
+cleanup() {
+    [[ -z $pid ]] || kill "$pid" 2>/dev/null || :
+    kill "$launcher" 2>/dev/null || :
+    wait "$launcher" 2>/dev/null || :
+}
+trap cleanup EXIT
+for ((i = 0; i < 100; i++)); do
+    if answer=$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
+        org.freedesktop.DBus GetConnectionUnixProcessID s "$role" 2>/dev/null); then
+        pid=${answer#u }
+        if busctl --user --list tree "$role" | grep -Fxq /Foreground; then
+            break
+        fi
+    fi
+    kill -0 "$launcher" 2>/dev/null || { cat "$log" >&2; exit 1; }
+    sleep 0.1
+done
+busctl --user --list tree "$role" | grep -Fxq /Foreground || { cat "$log" >&2; exit 1; }
+executable=$(readlink -f "/proc/$pid/exe")
+[[ $executable == */usr/bin/drink-kde ]]
+prefix=${executable%/bin/drink-kde}
+for library in lib/libQt6Widgets.so.6 lib/libLayerShellQtInterface.so.6 \
+    plugins/platforms/libqwayland.so plugins/iconengines/libqsvgicon.so; do
+    grep -Fq "$prefix/$library" "/proc/$pid/maps" || {
+        echo "Packaged process did not load $library" >&2
+        cat "$log" >&2
+        exit 1
+    }
+done
+busctl --user call "$role" /Instance io.github.napolitain.Drink.Instance quit
+wait "$launcher"
+trap - EXIT
+echo 'PASS: packaged Drink registered the release and foreground observer and loaded bundled Wayland and SVG plugins.'

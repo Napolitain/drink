@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra -Werror)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets DBus)
+find_package(Qt6 6.7 REQUIRED COMPONENTS Widgets DBus)
 find_package(LayerShellQt 6.6 REQUIRED)
 find_package(KF6Service REQUIRED)
 find_package(KF6StatusNotifierItem 6.14 REQUIRED)
@@ -18,14 +18,14 @@ set(bridge "${cargo_target}/release/libdrink_macos_bridge.a")
 add_custom_target(scheduler
     COMMAND cargo build --locked --release -p drink-macos-bridge --target-dir "${cargo_target}"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/.."
-    BYPRODUCTS "${bridge}" "${cargo_target}/cxxbridge/drink-macos-bridge/src/lib.rs.h"
+    BYPRODUCTS "${bridge}"
     VERBATIM)
 
 add_library(drink-audio STATIC CaptureGraph.cpp Microphone.cpp)
 target_link_libraries(drink-audio PRIVATE PkgConfig::PipeWire)
 target_include_directories(drink-audio PUBLIC "${PROJECT_SOURCE_DIR}")
 
-add_library(drink-plasma STATIC kde/BreakWindows.cpp kde/Drink.cpp kde/Foreground.cpp
+add_library(drink-plasma STATIC kde/AppImageUpdate.cpp kde/BreakWindows.cpp kde/Drink.cpp kde/Foreground.cpp
     kde/Instance.cpp kde/Session.cpp)
 set_target_properties(drink-plasma PROPERTIES AUTOMOC ON)
 add_dependencies(drink-plasma scheduler)
@@ -43,6 +43,10 @@ function(drink_executable target version)
 endfunction()
 
 set(DRINK_RELEASE_VERSION "" CACHE STRING "Release date (YYYY.MM.DD); an empty value builds Drink Dev")
+option(DRINK_APPIMAGE "Enable signed self-updates for the packaged x86-64 AppImage" OFF)
+if(DRINK_APPIMAGE AND (DRINK_RELEASE_VERSION STREQUAL "" OR NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+    message(FATAL_ERROR "DRINK_APPIMAGE requires an x86-64 dated release")
+endif()
 if(DRINK_RELEASE_VERSION STREQUAL "")
     set(drink_program drink-kde-dev)
     set(drink_name "Drink Dev")
@@ -56,6 +60,10 @@ else()
     set(drink_id io.github.napolitain.Drink)
 endif()
 drink_executable(${drink_program} "${DRINK_RELEASE_VERSION}")
+if(DRINK_APPIMAGE)
+    target_compile_definitions(${drink_program} PRIVATE DRINK_APPIMAGE)
+    target_sources(${drink_program} PRIVATE kde/appimage.qrc)
+endif()
 configure_file(kde/drink.desktop.in "${drink_id}.desktop" @ONLY)
 include(GNUInstallDirs)
 install(TARGETS ${drink_program} RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
@@ -76,6 +84,12 @@ if(BUILD_TESTING)
     add_executable(capture-test tests/capture.cpp)
     target_link_libraries(capture-test PRIVATE drink-audio)
     add_test(NAME capture-graph COMMAND capture-test)
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        add_executable(appimage-update-test tests/appimage-update.cpp)
+        target_link_libraries(appimage-update-test PRIVATE drink-plasma)
+        add_test(NAME appimage-update COMMAND bash "${PROJECT_SOURCE_DIR}/tests/appimage-update"
+            "$<TARGET_FILE:appimage-update-test>" "$<TARGET_FILE:Qt6::rcc>")
+    endif()
     find_package(Qt6 REQUIRED COMPONENTS Test)
     add_executable(plasma-test tests/plasma.cpp kde/resources.qrc)
     set_target_properties(plasma-test PROPERTIES AUTOMOC ON AUTORCC ON)

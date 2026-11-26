@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $# != 1 || ! $1 =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]]; then
+    echo 'Usage: linux/appimage/build YYYY.MM.DD' >&2
+    exit 2
+fi
+if [[ $(uname -s -m) != 'Linux x86_64' ]]; then
+    echo 'The Plasma AppImage requires an x86-64 Linux build host.' >&2
+    exit 1
+fi
+cd "$(dirname "$0")/../.."
+version=$1
+build_dir=target/linux-appimage
+cmake -S linux -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+    -DDRINK_RELEASE_VERSION="$version" -DDRINK_APPIMAGE=ON
+cmake --build "$build_dir" --parallel
+
+work=$(mktemp -d "$PWD/target/.appimage-XXXXXX")
+trap 'rm -rf "$work"' EXIT
+appdir=$work/AppDir
+cmake --install "$build_dir" --prefix "$appdir/usr"
+desktop-file-validate "$appdir/usr/share/applications/io.github.napolitain.Drink.desktop"
+
+# Qt loads these at runtime, outside the ELF dependency graph. Preserve the
+# plugin layout and have linuxdeploy resolve and patch each plugin's own deps.
+plugin_dir=$(qmake6 -query QT_INSTALL_PLUGINS)
+plugin_args=()
+for plugin in platforms/libqwayland.so \
+    wayland-shell-integration/libxdg-shell.so wayland-shell-integration/liblayer-shell.so \
+    wayland-graphics-integration-client/libqt-plugin-wayland-egl.so \
+    iconengines/libqsvgicon.so imageformats/libqsvg.so; do
+    file="$appdir/usr/plugins/$plugin"
+    install -Dm755 "$plugin_dir/$plugin" "$file"
+    plugin_args+=(--deploy-deps-only "$file")
+done
+cat >"$appdir/usr/bin/qt.conf" <<'CONF'
+[Paths]
+Prefix=..
+Plugins=plugins
+CONF
+
+# Pin immutable upstream releases, including the runtime written into Drink.
+# Extracting the build tools also works on CI runners without a FUSE device.
+download() {
+    local url=$1 checksum=$2 dest=$3
+    curl --fail --silent --show-error --location --retry 3 --proto '=https' \
+        --proto-redir '=https' --output "$dest" "$url"
+    echo "$checksum  $dest" | sha256sum --check --status
+    chmod 755 "$dest"
+}
+github=https://github.com
+download "$github/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage" \
+    c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d "$work/linuxdeploy"
+download "$github/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage" \
+    ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 "$work/appimagetool"
+download "$github/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64" \
+    2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d "$work/runtime"
+for tool in linuxdeploy appimagetool; do
+    mkdir "$work/$tool-dir"
+    (cd "$work/$tool-dir" && "../$tool" --appimage-extract >/dev/null)
+done
+"$work/linuxdeploy-dir/squashfs-root/AppRun" --appdir "$appdir" "${plugin_args[@]}" \
+    --custom-apprun linux/appimage/AppRun
+image=Drink-Linux-KDE-x86_64.AppImage
+ARCH=x86_64 "$work/appimagetool-dir/squashfs-root/AppRun" --runtime-file "$work/runtime" \
+    "$appdir" "$work/$image"
+actual=$(env -u DISPLAY -u WAYLAND_DISPLAY "$work/$image" --appimage-extract-and-run --version)
+if [[ $actual != "Drink $version" ]]; then
+    echo "Unexpected packaged version '$actual' (expected Drink $version)." >&2
+    exit 1
+fi
+mv -f "$work/$image" "target/$image"
+echo "target/$image"

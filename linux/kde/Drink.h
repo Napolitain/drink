@@ -10,15 +10,21 @@
 #include <functional>
 
 namespace kde {
+class AppImageUpdate;
 class Drink : public QObject {
+    Q_OBJECT
 public:
     explicit Drink(
+        AppImageUpdate *updates = nullptr,
         std::function<std::uint64_t()> clock = monotonicMilliseconds);
     void update();
 
+signals:
+    void breakFinished();
+
 private:
     static std::uint64_t monotonicMilliseconds();
-    void setupMenu();
+    void setupMenu(AppImageUpdate *updates);
     void finishBreak();
     void connectAudio();
     void refreshMenu();

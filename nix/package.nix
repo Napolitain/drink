@@ -9,6 +9,8 @@
   qt6,
   kdePackages,
   pipewire,
+  openssh,
+  util-linux,
   src,
   version,
 }:
@@ -42,6 +44,10 @@ stdenv.mkDerivation {
   ];
 
   doCheck = true;
+  nativeCheckInputs = [
+    openssh
+    util-linux
+  ];
   checkPhase = ''
     runHook preCheck
     ctest --output-on-failure -LE plasma

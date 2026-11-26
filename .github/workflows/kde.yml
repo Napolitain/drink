@@ -1,0 +1,45 @@
+name: KDE AppImage
+on:
+    workflow_call:
+        inputs:
+            tag:
+                type: string
+                required: true
+            upload:
+                type: boolean
+                default: false
+
+permissions:
+    contents: read
+
+jobs:
+    kde:
+        runs-on: ubuntu-26.04
+        steps:
+            - uses: actions/checkout@v7.0.1
+              with:
+                  persist-credentials: false
+            - uses: Swatinem/rust-cache@v2.9.2
+            - name: Install Plasma build, packaging and test dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends qt6-base-dev qt6-wayland qt6-svg-plugins \
+                    layer-shell-qt liblayershellqtinterface-dev libkf6service-dev libkf6statusnotifieritem-dev \
+                    libpipewire-0.3-dev kwin-wayland pipewire-bin libspa-0.2-modules dbus-daemon libgl1-mesa-dri \
+                    desktop-file-utils openssh-client curl file
+            - name: Test the reminder, release handoff and signed updater
+              run: |
+                  linux/build
+                  linux/tests/plasma-session
+            - name: Build and exercise the release image in private KWin
+              env:
+                  TAG: ${{ inputs.tag }}
+              run: |
+                  linux/appimage/build "${TAG#v}"
+                  linux/tests/plasma-session target/linux-appimage linux/appimage/test target/Drink-Linux-KDE-x86_64.AppImage
+            - uses: actions/upload-artifact@v7.0.1
+              if: inputs.upload
+              with:
+                  name: linux-release
+                  path: target/Drink-Linux-KDE-x86_64.AppImage
+                  if-no-files-found: error

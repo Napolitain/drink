@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Print current or installed only after a successful check.
+set -euo pipefail
+export LC_ALL=C
+umask 077
+image=$1
+current=$2
+identity=$3
+signers=$4
+releases=https://github.com/Napolitain/drink/releases
+asset=Drink-Linux-KDE-x86_64.AppImage
+fail() { echo "$*" >&2; exit 1; }
+valid_version() {
+    [[ $1 =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] &&
+        [[ $(date -u -d "${1//./-}" +%Y.%m.%d) == "$1" ]]
+}
+appimage() {
+    # ELF64 little-endian x86-64, with the type-2 AppImage marker in e_ident.
+    local header
+    header=$(od -An -tx1 -N20 -- "$1" | tr -d '[:space:]')
+    [[ $header =~ ^7f454c46020101..414902.{14}3e00$ ]]
+}
+same_image() {
+    [[ ! -L $image && -f $image && $(stat -Lc '%d:%i' -- "$image") == "$identity" ]]
+}
+
+valid_version "$current" || fail "Invalid installed release version"
+if ! same_image || ! appimage "$image"; then fail "Original AppImage has moved or changed"; fi
+http=(-q --fail --silent --show-error --proto '=https' --proto-redir '=https'
+    --connect-timeout 10 --max-time 120 --retry 2 --retry-max-time 180)
+location=$(curl "${http[@]}" --head --output /dev/null --write-out '%{redirect_url}' "$releases/latest")
+[[ $location == "$releases/tag/v"* ]] || fail "Unexpected latest-release location"
+version=${location#"$releases/tag/v"}
+valid_version "$version" || fail "Invalid release tag"
+if [[ ! $version > $current ]]; then
+    echo current
+    exit 0
+fi
+
+dir=$(dirname -- "$image")
+exec {original}<"$image"
+flock -n "$original" || fail "Another update is in progress"
+same_image && [[ $(stat -Lc '%d:%i' -- "/proc/$$/fd/$original") == "$identity" ]] || fail "AppImage changed before update"
+mode=$(stat -Lc '%a' -- "$image")
+fingerprint=$(stat -Lc '%d:%i:%f:%u:%g:%s:%y:%z' -- "$image")
+if [[ ! -O $image || ! -w $image || ! -x $image ]] || (( (8#$mode & 07200) != 0200 )); then
+    fail "A writable, user-owned, unprivileged AppImage is required"
+fi
+stage=$(mktemp -d -- "$dir/.drink-update.XXXXXXXX")
+trap 'rm -rf -- "$stage"' EXIT
+trap 'exit 1' HUP INT TERM
+candidate=$stage/$asset
+printf '%s\n' "$signers" > "$stage/signers"
+download="$releases/download/v$version/$asset"
+curl "${http[@]}" --location --max-filesize 268435456 --output "$candidate" "$download"
+curl "${http[@]}" --location --max-filesize 65536 --output "$candidate.sig" "$download.sig"
+ssh-keygen -Y verify -f "$stage/signers" -I drink -n "drink-linux-kde-x86_64-$version" \
+    -s "$candidate.sig" < "$candidate" >&2
+appimage "$candidate" || fail "Invalid x86-64 AppImage"
+chmod 0700 "$candidate"
+# The runtime extracts under TMPDIR in this mode. Keep the probe's extracted
+# executable private and independent of any other process running this release.
+reported=$(TMPDIR="$stage" APPIMAGE_EXTRACT_AND_RUN=1 timeout 120 "$candidate" --version)
+[[ $reported == "Drink $version" ]] || fail "Signed AppImage reports an unexpected version"
+
+# Staging beside the destination makes replacement a same-filesystem rename.
+# Keep the installed group and access mode; never import archive permissions.
+chgrp --reference="$image" -- "$candidate"
+chmod "$mode" -- "$candidate"
+sync -- "$candidate"
+same_image && [[ $(stat -Lc '%d:%i:%f:%u:%g:%s:%y:%z' -- "$image") == "$fingerprint" ]] || fail "AppImage changed during update"
+mv -fT -- "$candidate" "$image"
+echo installed

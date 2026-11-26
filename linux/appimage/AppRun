@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+# Qt resolves plugins from the bundled qt.conf. Ignore host Qt plugin paths
+# and retain their values for the updater's external tools and relaunch.
+if [ "${QT_PLUGIN_PATH+x}" ]; then
+    export DRINK_ORIGINAL_QT_PLUGIN_PATH="$QT_PLUGIN_PATH"
+else
+    unset DRINK_ORIGINAL_QT_PLUGIN_PATH
+fi
+if [ "${QT_QPA_PLATFORM_PLUGIN_PATH+x}" ]; then
+    export DRINK_ORIGINAL_QT_QPA_PLATFORM_PLUGIN_PATH="$QT_QPA_PLATFORM_PLUGIN_PATH"
+else
+    unset DRINK_ORIGINAL_QT_QPA_PLATFORM_PLUGIN_PATH
+fi
+unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH
+exec "${APPDIR:-$(dirname "$0")}/usr/bin/drink-kde" "$@"

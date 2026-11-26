@@ -3,6 +3,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export DRINK_TEST_BUILD_DIR
 DRINK_TEST_BUILD_DIR=$(realpath "${1:-target/linux}")
+if (( $# )); then shift; fi
+if (( ! $# )); then
+    set -- ctest --test-dir "$DRINK_TEST_BUILD_DIR" --output-on-failure -L plasma
+fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/config" XDG_DATA_HOME="$tmp/data"
@@ -43,7 +47,7 @@ cat >"$tmp/bus.conf" <<'BUS'
     </policy>
 </busconfig>
 BUS
-dbus-run-session --config-file="$tmp/bus.conf" -- bash -eu <<'SESSION'
+dbus-run-session --config-file="$tmp/bus.conf" -- bash -seu -- "$@" <<'SESSION'
 kwin_wayland --virtual --width 960 --height 540 --output-count 2 --no-lockscreen --no-kactivities --socket "$WAYLAND_DISPLAY" >"$XDG_RUNTIME_DIR/kwin.log" 2>&1 &
 wm=$!
 trap 'kill "$wm" 2>/dev/null || true; wait || true' EXIT
@@ -51,6 +55,5 @@ for _ in {1..100}; do
     [[ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]] && break
     sleep 0.1
 done
-DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" ctest --test-dir "$DRINK_TEST_BUILD_DIR" \
-    --output-on-failure -L plasma || { cat "$XDG_RUNTIME_DIR/"*.log >&2; exit 1; }
+DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" "$@" || { cat "$XDG_RUNTIME_DIR/"*.log >&2; exit 1; }
 SESSION

@@ -14,7 +14,7 @@ if [[ -n ${DRINK_RELEASE_VERSION:-} ]]; then
     build_dir=target/linux-release
 fi
 cmake -S linux -B "$build_dir" -DCMAKE_BUILD_TYPE=Release \
-    -DDRINK_RELEASE_VERSION="${DRINK_RELEASE_VERSION:-}"
+    -DDRINK_RELEASE_VERSION="${DRINK_RELEASE_VERSION:-}" -DDRINK_APPIMAGE=OFF
 cmake --build "$build_dir" --parallel
 ctest --test-dir "$build_dir" --output-on-failure -LE plasma
 if [[ ${1:-} == --dev ]]; then
